@@ -20,22 +20,6 @@ The patch embedding stream applies a patch size of two along the temporal dimens
 
 The temporal attention pooling module computes attention weights across the 150 timepoints using a two-layer multilayer perceptron with hidden dimension 128 and GELU activation. These weights are applied to the primary stream outputs to produce a single 512-dimensional vector, which is passed through a final linear layer and sigmoid activation for binary classification.
 
-## Project Structure
-```
-root/
-├── 📄 data.py              # Data loading & cohort creation
-├── 📄 eval.py              # Model evaluation & plotting  
-├── 📄 interpret.py         # Permutation importance & interpretation
-├── 📄 model.py             # BBTransformer architecture
-├── 📄 train.py             # Training with Ranger21 optimizer
-├── 📄 tuning.py            # Hyperparameter optimization
-├── 📄 utils.py             # Weight management utilities
-├── 📁 config/              # Model configurations
-├── 📁 notebooks/           # Jupyter notebooks
-│   ├── 📁 analysis/        # Disease-specific studies
-│   └── 📁 tutorials/       # Step-by-step guides
-├── 📁 preprocessing/       # Dataset-specific preparation
-└── 📁 weights/             # Trained model checkpoints
 ```
 
 ## Quick Start
