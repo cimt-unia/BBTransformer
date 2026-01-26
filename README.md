@@ -1,8 +1,7 @@
-# BBTransformer: Brain Biomarker Transformer for fMRI Classification
+# Brain Biomarker Transformer for fMRI Classification
 
 
-
-A minimal, modular framework for interpretable fMRI-based brain disorder classification using transformer architectures with rotary embeddings and grouped-query attention.
+A minimal, modular framework for interpretable fMRI-based brain disorder classification using a transformer time series multivariate architecture with rotary embeddings and grouped-query attention.
 
 
 ### **A Multi-Scale Spatiotemporal Decoder**
@@ -12,7 +11,9 @@ BBTransformer processes the 150 × 414 input through three integrated streams. T
 
 <img width="1408" height="768" alt="ukbb_diagram" src="https://github.com/user-attachments/assets/f343fb1e-9a25-49c6-ae17-2f8f0cb226df" />
 
-### Model Architecture
+
+
+## Model Architecture
 
 The model accepts as input a 150 × 414 matrix representing the time series for all regions. This input is processed through three parallel streams. The primary stream consists of six transformer encoder layers, each with 512-dimensional embeddings, eight query attention heads, and four key-value heads in a grouped-query attention configuration. Rotary position embeddings with dimensionality 64 encode relative temporal positions. Each layer uses root mean square layer normalization before attention and feedforward operations. The feedforward network within each layer employs SwiGLU activation with an expansion factor of 8/3.
 
@@ -20,7 +21,6 @@ The patch embedding stream applies a patch size of two along the temporal dimens
 
 The temporal attention pooling module computes attention weights across the 150 timepoints using a two-layer multilayer perceptron with hidden dimension 128 and GELU activation. These weights are applied to the primary stream outputs to produce a single 512-dimensional vector, which is passed through a final linear layer and sigmoid activation for binary classification.
 
-```
 
 ## Quick Start
 
