@@ -43,9 +43,8 @@ Final output: single probability via sigmoid for binary classification.
 
 ### 1. Install as a Package
 ```bash
-git clone https://github.com/yourname/BBT.git
-cd BBT
-pip install -e .
+TOKEN = "ghp_"
+!python -m pip install --user git+https://$TOKEN@github.com/cimt-unia/BBTransformer.git
 ```
 
 
