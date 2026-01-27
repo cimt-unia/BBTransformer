@@ -1,7 +1,10 @@
 # Brain Biomarker Transformer for fMRI Classification
 
+A minimal, modular, and interpretable foundation model for fMRI-based brain disorder classification using a multi-scale transformer architecture with rotary embeddings and grouped-query attention.
 
-A minimal, modular framework for interpretable fMRI-based brain disorder classification using a transformer time series multivariate architecture with rotary embeddings and grouped-query attention.
+Trained on 414-region Glasser+Tian parcellated time series, BBTransformer enables transfer learning, fine-tuning, and biomarker discovery across ADHD, ASD, UK Biobank ICD conditions, and more.
+
+<br>
 
 
 ### **A Multi-Scale Spatiotemporal Decoder**
@@ -13,107 +16,192 @@ BBTransformer processes the 150 × 414 input through three integrated streams. T
 
 
 
+<br>
+
+
+
+<br>
+
 ## Model Architecture
 
-The model accepts as input a 150 × 414 matrix representing the time series for all regions. This input is processed through three parallel streams. The primary stream consists of six transformer encoder layers, each with 512-dimensional embeddings, eight query attention heads, and four key-value heads in a grouped-query attention configuration. Rotary position embeddings with dimensionality 64 encode relative temporal positions. Each layer uses root mean square layer normalization before attention and feedforward operations. The feedforward network within each layer employs SwiGLU activation with an expansion factor of 8/3.
+BBTransformer processes **150 × 414** fMRI time series through three integrated streams:
 
-The patch embedding stream applies a patch size of two along the temporal dimension, yielding 75 tokens. These patches are projected to 512 dimensions and processed through two transformer layers with the same architecture as the primary stream. Patch representations are integrated with the primary stream through cross-attention in the fourth layer.
+1. **Primary Temporal Stream**:  
+   - 6 transformer layers  
+   - 512-dim embeddings, 8 query heads, 4 KV heads (GQA)  
+   - Rotary position embeddings, RMSNorm, SwiGLU  
 
-The temporal attention pooling module computes attention weights across the 150 timepoints using a two-layer multilayer perceptron with hidden dimension 128 and GELU activation. These weights are applied to the primary stream outputs to produce a single 512-dimensional vector, which is passed through a final linear layer and sigmoid activation for binary classification.
+2. **Local Patch Stream**:  
+   - Patch size = 2 → 75 tokens  
+   - Cross-attention fusion at layer 4  
 
+3. **Temporal Attention Pooling**:  
+   - Learned weighting of timepoints for diagnostic decisions  
+
+Final output: single probability via sigmoid for binary classification.
+
+---
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Install as a Package
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/yourname/BBT.git
+cd BBT
+pip install -e .
 ```
 
-### 2. Prepare Data
-Run dataset-specific preprocessing:
+
+
+### 2. Prepare Data (Dataset-Specific)
+Run preprocessing notebooks to generate `.npz` + `.csv`:
 ```bash
-# ADHD-200 example
 jupyter notebook preprocessing/ADHD200/prepare_adhd200_gt.ipynb
 ```
 
-### 3. Train Model
-Use pre-tuned configuration:
+### 3. Train or Fine-Tune
 ```python
-from model import create_bbtransformer
-from train import train_model
-from data import prepare_fmri_data
+import bbtransformer as bbt
 
 # Load data
-train_loader, val_loader, test_loader, metadata = prepare_fmri_data(
+train_loader, val_loader, test_loader, metadata = bbt.prepare_fmri_data(
     data_path='dataset/fmri_ADHD.npz',
     pheno_path='dataset/pheno_ADHD.csv',
     target_column='ADHD'
 )
 
-# Create and train model
-model = create_bbtransformer(config)
-trained_model = train_model(model, train_loader, val_loader)
+# Create model
+model = bbt.create_bbtransformer({
+    'feature_dim': 414,
+    'embed_dim': 512,
+    'num_heads': 8,
+    'num_layers': 6,
+    # ... other hyperparameters
+})
+
+# Train
+trained_model = bbt.train_model(model, train_loader, val_loader)
+
+# Save
+bbt.save_model_weights(trained_model, target_name='ADHD')
 ```
 
-### 4. Analyze Results
-Explore analysis notebooks:
-- `notebooks/analysis/ADHD_adhd200_classification/ADHD_notebook.ipynb`
-- `notebooks/analysis/ASD_abide_classification/ASD_notebook.ipynb`
+### 4. Interpret Results
+```python
+# Permutation importance
+roi_names = bbt.load_roi_names()  # ✅ No path needed!
+importance = bbt.calculate_permutation_importance(trained_model, val_loader, 414)
+bbt.plot_importance(importance, roi_names, top_n=30)
+
+# Single-subject prediction
+predictor = bbt.Diagnostic(trained_model, metadata)
+result = predictor.predict_single(fmri, age=56.3, ext=1)
+print(result['interpretation'])
+```
+
+---
 
 ## Key Features
 
 ### Architecture
 - **Rotary Positional Embeddings** for temporal awareness
-- **Grouped-Query Attention** for efficiency
+- **Grouped-Query Attention (GQA)** for efficiency
 - **Multi-scale fusion** with patch embedding
 - **Temporal attention pooling** for sequence summarization
 
 ### Training
-- **Ranger21 optimizer** with adaptive learning rates
-- **Flexible loss functions**: BCE, Focal Loss, Adaptive Focal Loss
-- **Early stopping** with multiple metrics (loss, AUC, F1)
+- **Ranger21 optimizer** with cosine annealing
+- **Flexible loss**: BCE, Focal Loss, Adaptive Focal Loss
+- **Early stopping** on loss, AUC, or F1
 
 ### Interpretation
 - **Permutation importance** for brain region ranking
-- **Single-subject prediction** with confidence scoring
-- **Attention map visualization** (when enabled)
+- **Single-subject diagnosis** with confidence scoring (`Diagnostic` class)
+- **Attention visualization** (when `return_attn_weights=True`)
 
-## 📈 Supported Datasets
+---
+
+## Supported Datasets
 
 | Dataset | Conditions | Atlas |
-|---------|------------|-------|
+|--------|------------|-------|
 | **ADHD-200** | ADHD vs Controls | Glasser+Tian (414 ROIs) |
 | **ABIDE** | ASD vs Controls | Glasser+Tian (414 ROIs) |
-| **UK Biobank** | Multiple ICD conditions | Glasser+Tian (414 ROIs) |
+| **UK Biobank** | ICD F32, G20, G40, etc. | Glasser+Tian (414 ROIs) |
+| **NAKO** | (In progress) | Glasser+Tian (414 ROIs) |
 
+---
 
-## Analysis Projects
+## 📈 Analysis Projects
 
-- **ADHD Classification** (`ADHD_adhd200_classification/`)
-- **ASD Classification** (`ASD_abide_classification/`)  
-- **PDD Classification** (`PDD_ukbb_classification/`)
-- **Biological Sex Prediction** (`Sex_ukbb_classification/`)
+- `notebooks/analysis/ADHD_adhd200_classification/`
+- `notebooks/analysis/ASD_abide_classification/`
+- `notebooks/analysis/PDD_ukbb_classification/`
+- `notebooks/analysis/Sex_ukbb_classification/`
 
-## Tutorials
+## 📘 Tutorials
 
-- `finetuning_transfer.ipynb` - Transfer learning workflow
-- `hyperparameter_tuning.ipynb` - Optuna optimization guide
-- `ukbb/Cohort_creation.ipynb` - UKB-specific preprocessing
+- `notebooks/tutorials/hyperparameter_tuning.ipynb`
+- `notebooks/tutorials/transfer_learning.ipynb`
+- `preprocessing/UKBB/balance_cohorts/Cohort_creation.ipynb`
 
-## Configuration
+---
 
-Best hyperparameters from Optuna tuning are stored in:
+## ⚙️ Configuration
+
+Best hyperparameters from Optuna tuning:
+```python
+BEST_HP = {
+    'feature_dim': 414,
+    'embed_dim': 512,
+    'num_heads': 8,
+    'num_layers': 6,
+    'dropout_input': 0.27,
+    'dropout_classifier': 0.03,
+    'patch_size': 3,
+    'embed_dim_age': 32,
+    'embed_dim_ext': 16,
+    # ...
+}
 ```
-config/best_bbtransformer_config.json
-```
+
+---
 
 ## 📦 Requirements
 
-- Python 3.8+
-- PyTorch 2.0+
-- pytorch_optimizer
-- Optuna
-- scikit-learn
-- pandas, numpy
+- Python 3.8–3.12 (**PyTorch does not support 3.13 yet**)
+- PyTorch ≥ 2.0
 - nilearn (for preprocessing)
+- pytorch_optimizer, optuna ≥ 3.0
+- scikit-learn, pandas, numpy, matplotlib, seaborn, tqdm, jupyter
+
+Install via:
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 📁 Project Structure
+
+```
+BBT/
+├── bbtransformer/          # Core package (installable)
+│   ├── __init__.py
+│   ├── model.py            # BBTransformer, create_bbtransformer
+│   ├── utils.py            # load_roi_names, weight utilities
+│   └── trainer/            # train, eval, rank, pred, tune
+├── notebooks/              # Analysis & tutorials
+├── preprocessing/          # Dataset-specific curation
+└── weights/                # (User-provided) pretrained weights
+```
+
+All functions are accessible via:
+```python
+from bbtransformer import prepare_fmri_data, create_bbtransformer, Diagnostic, ...
+# or
+import bbtransformer as bbt
+```
+
+
 
