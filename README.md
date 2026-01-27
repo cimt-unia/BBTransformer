@@ -1,15 +1,12 @@
 # Brain Biomarker Transformer for fMRI Classification
 
-A minimal, modular, and interpretable foundation model for fMRI-based brain disorder classification using a multi-scale transformer architecture with rotary embeddings and grouped-query attention.
+A minimal, modular, and interpretable foundation model for fMRI-based brain disorder classification using a multivariate time series model with rotary embeddings and grouped-query attention.
 
 Trained on 414-region Glasser+Tian parcellated time series, BBTransformer enables transfer learning, fine-tuning, and biomarker discovery across ADHD, ASD, UK Biobank ICD conditions, and more.
 
 <br>
 
 
-### **A Multi-Scale Spatiotemporal Decoder**
-
-BBTransformer processes the 150 × 414 input through three integrated streams. The primary temporal stream consists of six transformer layers with 512-dimensional embeddings, eight query heads, four key-value heads implementing grouped-query attention, rotary position embeddings for relative timing, root mean square layer normalization, and SwiGLU activation functions. The local temporal stream applies patch embeddings with a patch size of two, yielding 75 coarse-grained tokens that are fused with the primary stream via cross-attention mechanisms beginning at the fourth layer. Finally, a learned temporal attention pooling mechanism dynamically weights each of the 150 timepoints according to its contribution to the final diagnostic decision.
 
 
 <img width="1408" height="768" alt="ukbb_diagram" src="https://github.com/user-attachments/assets/f343fb1e-9a25-49c6-ae17-2f8f0cb226df" />
@@ -32,7 +29,7 @@ BBTransformer processes **150 × 414** fMRI time series through three integrated
    - Rotary position embeddings, RMSNorm, SwiGLU  
 
 2. **Local Patch Stream**:  
-   - Patch size = 2 → 75 tokens  
+   - Flexible Patch size
    - Cross-attention fusion at layer 4  
 
 3. **Temporal Attention Pooling**:  
@@ -89,7 +86,7 @@ bbt.save_model_weights(trained_model, target_name='ADHD')
 ### 4. Interpret Results
 ```python
 # Permutation importance
-roi_names = bbt.load_roi_names()  # ✅ No path needed!
+roi_names = bbt.load_roi_names()  # No path needed
 importance = bbt.calculate_permutation_importance(trained_model, val_loader, 414)
 bbt.plot_importance(importance, roi_names, top_n=30)
 
