@@ -59,7 +59,7 @@ def prepare_fmri_data(
     valid = np.isfinite(y) & ((y == 0) | (y == 1)) & np.isfinite(age) & ((ext == 0) | (ext == 1))
     fMRI, y, age, ext = fMRI[valid], y[valid], age[valid], ext[valid]
     
-    print(f"🧼 Cohort: {len(y)} subjects ({int(y.sum())} cases, {len(y)-int(y.sum())} controls, {y.mean():.1%} prevalence)")
+    print(f"Cohort: {len(y)} subjects ({int(y.sum())} cases, {len(y)-int(y.sum())} controls, {y.mean():.1%} prevalence)")
     
     # Stratified splits
     idx = np.arange(len(fMRI))
@@ -97,8 +97,9 @@ def prepare_fmri_data(
         'age_std': float(age_std),
     }
     
-    print(f"✅ Splits → Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
+    print(f"Splits → Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
     
     return *loaders, metadata
+
 
 
