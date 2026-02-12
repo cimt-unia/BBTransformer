@@ -1,8 +1,8 @@
 # bbtransformer\trainer\exe.py
 
-
 import os
 import gc
+import json
 import torch
 import numpy as np
 import pandas as pd
@@ -22,18 +22,17 @@ from .rank import (
 
 def run_analysis(
     target_column: str,
-    # --- Flexible path inputs (preferred) ---
     data_path: Optional[str] = None,
     pheno_path: Optional[str] = None,
-    # --- Legacy fallback (for CHRT-style) ---
     base_dir: Optional[str] = None,
-    # --- Weights & config ---
     weights_dir: str = '/mnt/movement/users/jaizor/xtra/notebooks/BBT/_weights',
     pretrained_weight_file: Optional[str] = None,
     use_pretrained: bool = True,
     compute_importance: bool = True,
     random_seed: int = 42,
-    device: str = 'cpu'
+    device: Optional[str] = None,
+    save_plots: bool = False,
+    save_json: bool = True
 ) -> Dict[str, Any]:
     """
     Runs the full BBTransformer classification pipeline for a single disorder.
@@ -43,12 +42,11 @@ def run_analysis(
     target_column : str
         Binary target column name in the phenotype file (e.g., 'ASD', 'ADHD').
     data_path : str, optional
-        Full path to fMRI .npz file (e.g., '/.../fmri_ASD.npz').
+        Full path to fMRI .npz file.
     pheno_path : str, optional
-        Full path to phenotype .csv file (e.g., '/.../pheno_ASD.csv').
+        Full path to phenotype .csv file.
     base_dir : str, optional
-        Legacy: used only if data_path/pheno_path are not provided.
-        Assumes files named `fmri_{target}.npz` and `pheno_{target}.csv`.
+        Legacy fallback directory; assumes files named `fmri_{target}.npz` and `pheno_{target}.csv`.
     weights_dir : str
         Directory containing pretrained .pth files.
     pretrained_weight_file : str or None
@@ -59,18 +57,26 @@ def run_analysis(
         Whether to compute permutation importance.
     random_seed : int
         Random seed for reproducibility.
-    device : str
-        Device for model loading ('cpu' or 'cuda').
+    device : str or None
+        Device for model execution ('cpu' or 'cuda'). If None, uses 'cuda' if available, else 'cpu'.
+    save_plots : bool
+        Whether to save evaluation and importance plots to disk.
+    save_json : bool
+        Whether to save a JSON summary of results after analysis.
 
     Returns
     -------
-    dict : Contains metrics, model, metadata, and (optionally) importance scores.
+    dict : Contains metrics, trained model, metadata, and (optionally) importance scores.
     """
+    # Set device automatically if not specified
+    if device is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     # Ensure output directories exist
     Path('weights').mkdir(exist_ok=True)
     Path('results').mkdir(exist_ok=True)
 
-    # 🔑 PATH RESOLUTION: Prefer explicit paths, fall back to base_dir
+    # Resolve data paths
     if data_path is not None and pheno_path is not None:
         DATA_PATH = data_path
         PHENO_PATH = pheno_path
@@ -78,11 +84,9 @@ def run_analysis(
         DATA_PATH = os.path.join(base_dir, f"fmri_{target_column}.npz")
         PHENO_PATH = os.path.join(base_dir, f"pheno_{target_column}.csv")
     else:
-        raise ValueError(
-            "Either (data_path and pheno_path) OR base_dir must be provided."
-        )
+        raise ValueError("Either (data_path and pheno_path) or base_dir must be provided.")
 
-    # Validate data files exist
+    # Validate input files
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"fMRI data not found: {DATA_PATH}")
     if not os.path.exists(PHENO_PATH):
@@ -97,9 +101,7 @@ def run_analysis(
         if not os.path.exists(WEIGHT_PATH):
             raise FileNotFoundError(f"Pretrained weights not found: {WEIGHT_PATH}")
 
-    # ===============================================
-    # STEP 1: Load Data
-    # ===============================================
+    # Step 1: Load data
     print("=" * 60)
     print(f"STEP 1: Loading Data for Target = '{target_column}'")
     print(f"  fMRI: {DATA_PATH}")
@@ -107,14 +109,14 @@ def run_analysis(
     print("=" * 60)
 
     pheno = pd.read_csv(PHENO_PATH)
-    print(f"✓ Loaded phenotype: {pheno.shape}")
+    print(f"Loaded phenotype: {pheno.shape}")
 
     features = np.load(DATA_PATH)
     data = features['data']
     subject_ids = features['subject_ids']
 
     roi_names = load_roi_names()
-    print(f"✓ Loaded fMRI: {data.shape}")
+    print(f"Loaded fMRI: {data.shape}")
     print(f"  Subjects: {len(subject_ids)}")
     print(f"  Timepoints: {data.shape[1]}")
     print(f"  Brain regions: {data.shape[2]}")
@@ -123,12 +125,10 @@ def run_analysis(
     required_columns = [target_column, 'Age', 'Sex']
     missing = [col for col in required_columns if col not in pheno.columns]
     if missing:
-        raise ValueError(f"❌ Missing columns in phenotype: {missing}")
-    print("✓ All required columns present")
+        raise ValueError(f"Missing columns in phenotype: {missing}")
+    print("All required columns present")
 
-    # ===============================================
-    # STEP 2: Prepare Data Loaders
-    # ===============================================
+    # Step 2: Prepare data loaders
     print("\n" + "=" * 60)
     print("STEP 2: Preparing Data Loaders")
     print("=" * 60)
@@ -146,14 +146,12 @@ def run_analysis(
         random_seed=random_seed
     )
 
-    print("\n Dataset Meta")
+    print("\nDataset Meta")
     for key, value in metadata.items():
         if key not in ['age_mean', 'age_std']:
             print(f"  {key}: {value}")
 
-    # ===============================================
-    # STEP 3: Initialize Model
-    # ===============================================
+    # Step 3: Initialize model
     print("\n" + "=" * 60)
     print("STEP 3: Initializing BBTransformer")
     print("=" * 60)
@@ -182,11 +180,9 @@ def run_analysis(
     }
 
     model = create_bbtransformer(BEST_HP)
-    print(f"✓ Model created on {device} with {model.count_parameters():,} parameters")
+    print(f"Model created on {device} with {model.count_parameters():,} parameters")
 
-    # ===============================================
-    # STEP 3.5: Load Pretrained Weights (Optional)
-    # ===============================================
+    # Step 3.5: Load pretrained weights (optional)
     if use_pretrained:
         print("\n" + "=" * 60)
         print("STEP 3.5: Loading Pretrained Weights")
@@ -194,16 +190,12 @@ def run_analysis(
         print("=" * 60)
         success = load_model_weights(model, device=device, weight_paths=[WEIGHT_PATH])
         if not success:
-            raise RuntimeError("❌ Failed to load pretrained weights.")
-        print("✓ Pretrained weights loaded successfully.")
+            raise RuntimeError("Failed to load pretrained weights.")
+        print("Pretrained weights loaded successfully.")
     else:
         print("\n[INFO] Training from scratch (no pretrained weights).")
 
-
-
-    # ===============================================
-    # STEP 4: Train Model
-    # ===============================================
+    # Step 4: Train model
     print("\n" + "=" * 60)
     print("STEP 4: Training")
     print("=" * 60)
@@ -213,41 +205,36 @@ def run_analysis(
         train_loader=train_loader,
         val_loader=val_loader,
         epochs=10000,
-        lr=3e-4,  
+        lr=3e-4,
         weight_decay=2.3798658050870825e-05,
         patience=90,
-        use_focal_loss=False  # Balanced data 
+        use_focal_loss=False
     )
 
-    # ===============================================
-    # STEP 4.5: Save Final Weights
-    # ===============================================
+    # Step 4.5: Save final weights
     save_model_weights(trained_model, target_name=target_column, safe_format=True)
 
-    # ===============================================
-    # STEP 5: Evaluate
-    # ===============================================
+    # Step 5: Evaluate on test set
     print("\n" + "=" * 60)
     print("STEP 5: Test Set Evaluation")
     print("=" * 60)
 
     metrics, probs, targets = evaluate_model(trained_model, test_loader)
 
-    print("\n Performance Metrics:")
+    print("\nPerformance Metrics:")
     print(f"  Accuracy:  {metrics['accuracy']:.4f}")
     print(f"  Precision: {metrics['precision']:.4f}")
     print(f"  Recall:    {metrics['recall']:.4f}")
     print(f"  F1 Score:  {metrics['f1']:.4f}")
     print(f"  ROC-AUC:   {metrics['roc_auc']:.4f}")
 
-    print("\n📊 Confusion Matrix:")
+    print("\nConfusion Matrix:")
     print(metrics['confusion_matrix'])
 
-    plot_results(metrics, probs, targets, save_path=f'results/{target_column}_results.png')
+    if save_plots:
+        plot_results(metrics, probs, targets, save_path=f'results/{target_column}_results.png')
 
-    # ===============================================
-    # STEP 6: Permutation Importance (Conditional)
-    # ===============================================
+    # Step 6: Permutation importance (conditional)
     importance_scores = None
     if compute_importance:
         print("\n" + "=" * 60)
@@ -271,20 +258,50 @@ def run_analysis(
             save_path=f'results/importance_{target_column}.csv'
         )
 
-        plot_importance(
-            importance_scores,
-            roi_names=roi_names,
-            top_n=10,
-            save_path=f'results/importance_{target_column}_plot.png'
-        )
+        if save_plots:
+            plot_importance(
+                importance_scores,
+                roi_names=roi_names,
+                top_n=10,
+                save_path=f'results/importance_{target_column}_plot.png'
+            )
 
-        print("✅ Permutation importance saved.")
+        print("Permutation importance saved.")
     else:
         print("\n[INFO] Skipping permutation importance (compute_importance=False).")
 
+    # Step 7: Save JSON summary (optional)
+    json_results = {
+        'target': target_column,
+        'metrics': {
+            k: float(v) if isinstance(v, (np.number, float, int)) else v
+            for k, v in metrics.items()
+            if k != 'confusion_matrix'
+        },
+        'metadata': {
+            k: float(v) if isinstance(v, (np.number, float)) else v
+            for k, v in metadata.items()
+        },
+        'importance_top_rois': None
+    }
+
+    if 'confusion_matrix' in metrics:
+        cm = metrics['confusion_matrix']
+        json_results['metrics']['confusion_matrix'] = cm.tolist() if hasattr(cm, 'tolist') else cm
+
+    if compute_importance and importance_scores is not None:
+        top_indices = np.argsort(importance_scores)[-10:][::-1]
+        json_results['importance_top_rois'] = [roi_names[i] for i in top_indices]
+
+    if save_json:
+        json_path = f'results/{target_column}_results.json'
+        with open(json_path, 'w') as f:
+            json.dump(json_results, f, indent=4)
+        print(f"Results saved to JSON: {json_path}")
+
     print("\n" + "=" * 60)
-    print("✅ TRAINING & EVALUATION COMPLETE")
-    print(f"→ Target: {target_column}")
+    print("TRAINING & EVALUATION COMPLETE")
+    print(f"Target: {target_column}")
     print("=" * 60)
 
     return {
