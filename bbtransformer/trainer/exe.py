@@ -171,38 +171,43 @@ def run_analysis(
         if key not in ['age_mean', 'age_std']:
             print(f"  {key}: {value}")
 
+ 
     print("\n" + "=" * 60)
     print("STEP 3: Initializing BBTransformer")
     print("=" * 60)
-
+    
     torch.cuda.empty_cache()
     gc.collect()
-
+    
+    # Updated defaults matching YFT best parameters and refactored architecture
     DEFAULT_BEST_HP = {
         'feature_dim': metadata['feature_dim'],
         'num_classes': 1,
-        'embed_dim': 512,
+        'embed_dim': 256,          
         'num_heads': 8,
         'num_layers': 6,
-        'dropout_input': 0.271037581013532,
-        'dropout_attn': 0.14600627822960482,
-        'dropout_ffn': 0.27515967497010174,
-        'dropout_classifier': 0.029054607960590395,
-        'dropout_temporal': 0.1670895241114272,
+        'dropout_input': 0.15,    
+        'dropout_patch': 0.15,     
+        'dropout_attn': 0.13,      
+        'dropout_ffn': 0.15,       
+        'dropout_classifier': 0.05, 
+        'dropout_temporal': 0.15,  
         'embed_dim_age': 32,
         'embed_dim_ext': 16,
-        'patch_size': 3,
+        'patch_size': 3,           
         'patch_embed_ratio': 0.5,
-        'temp_attn_hidden': 128,
+        'temp_attn_hidden': 64,   
         'n_kv_heads': 4,
-        'return_attn_weights': False
+        'return_attn_weights': False,
+        'stochastic_depth_rate': 0.05  
     }
-
+    
     if model_config is not None:
         DEFAULT_BEST_HP.update(model_config)
-
+    
     model = create_bbtransformer(DEFAULT_BEST_HP)
     print(f"Model created on {device} with {model.count_parameters():,} parameters")
+
 
     if use_pretrained:
         print("\n" + "=" * 60)
