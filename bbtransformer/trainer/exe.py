@@ -26,7 +26,7 @@ from bbtransformer import (
 )
 
 
-def run_disorder_pipeline(
+def run_analysis(
     target_column: str,
     # --- Flexible path inputs (preferred) ---
     data_path: Optional[str] = None,
