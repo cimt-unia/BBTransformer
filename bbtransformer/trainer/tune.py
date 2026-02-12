@@ -1,6 +1,7 @@
 # bbtransformer\trainer\tune.py
 
 # Import Essentials
+import json
 import torch
 import numpy as np
 import optuna
@@ -213,3 +214,4 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     print(f"{'='*80}\n")
     
     return best_params, study
+
