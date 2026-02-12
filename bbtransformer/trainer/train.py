@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from sklearn.metrics import roc_auc_score, f1_score
 from pytorch_optimizer import Ranger21
 import numpy as np
 from tqdm import tqdm
@@ -43,7 +44,7 @@ def train_model(
     eta_min=1e-6,
     loss_type=None,           # None → legacy BCE; or 'bce', 'focal', 'adaptive_focal'
     loss_params=None,         # dict: e.g., {'alpha': 0.75, 'gamma': 2.0, 'pos_weight': 2.0}
-    early_stop_metric="loss"  # 'loss', 'auc', or 'f1'
+    early_stop_metric="f1"  # 'loss', 'auc', or 'f1'
 ):
     # Train BBTransformer model with flexible loss and early stopping
 
@@ -234,6 +235,7 @@ class AdaptiveFocalLoss(nn.Module):
         if self.reduction == 'mean':
             return focal_loss.mean()
         return focal_loss.sum() if self.reduction == 'sum' else focal_loss
+
 
 
 
