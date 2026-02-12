@@ -5,13 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, Any, List
 
-# Optional FlashAttention-2 support
-try:
-    from flash_attn import flash_attn_func
-    FLASH_AVAILABLE = True
-except ImportError:
-    FLASH_AVAILABLE = False
-
 
 # ======================
 # TRANSFORMER COMPONENTS
@@ -133,15 +126,14 @@ class PatchEmbedding(nn.Module):
 
 
 class GQAWithRoPE(nn.Module):
-    """Grouped-Query Attention with RoPE and optional FlashAttention-2"""
+    """Grouped-Query Attention with RoPE (uses PyTorch's optimized attention)"""
     def __init__(
         self, 
         d_model: int, 
         n_heads: int, 
         n_kv_heads: Optional[int] = None, 
         dropout: float = 0.1, 
-        return_attn_weights: bool = False,
-        use_flash: bool = True
+        return_attn_weights: bool = False
     ):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
@@ -149,7 +141,6 @@ class GQAWithRoPE(nn.Module):
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or max(1, n_heads // 4)
         self.return_attn_weights = return_attn_weights
-        self.use_flash = use_flash and FLASH_AVAILABLE and not return_attn_weights
         
         # Ensure n_kv_heads is valid
         if self.n_kv_heads > n_heads:
@@ -186,40 +177,26 @@ class GQAWithRoPE(nn.Module):
             v = v.repeat_interleave(self.n_heads // self.n_kv_heads, dim=1)
 
         # Compute attention
-        if self.use_flash:
-            # FlashAttention-2: expects (B, L, n_heads, head_dim)
-            q = q.transpose(1, 2)
-            k = k.transpose(1, 2)
-            v = v.transpose(1, 2)
-            attn_output = flash_attn_func(
+        if self.return_attn_weights:
+            # Manual attention for weight extraction (needed for interpretability)
+            scale = self.head_dim ** -0.5
+            attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
+            attn_weights = F.softmax(attn_weights, dim=-1)
+            if self.training and self.dropout > 0:
+                attn_weights = F.dropout(attn_weights, p=self.dropout)
+            attn_output = torch.matmul(attn_weights, v)
+            self.last_attn_weights = attn_weights.detach()
+        else:
+            # PyTorch's optimized attention (automatically uses FlashAttention when available)
+            attn_output = F.scaled_dot_product_attention(
                 q, k, v,
                 dropout_p=self.dropout if self.training else 0.0,
-                causal=False
+                is_causal=False
             )
-            attn_output = attn_output.reshape(B, L, D)
             self.last_attn_weights = None
-        else:
-            # Standard attention or with weights
-            if self.return_attn_weights:
-                # Manual attention for weight extraction
-                scale = self.head_dim ** -0.5
-                attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
-                attn_weights = F.softmax(attn_weights, dim=-1)
-                if self.training and self.dropout > 0:
-                    attn_weights = F.dropout(attn_weights, p=self.dropout)
-                attn_output = torch.matmul(attn_weights, v)
-                self.last_attn_weights = attn_weights.detach()
-            else:
-                # PyTorch scaled_dot_product_attention
-                attn_output = F.scaled_dot_product_attention(
-                    q, k, v,
-                    dropout_p=self.dropout if self.training else 0.0,
-                    is_causal=False
-                )
-                self.last_attn_weights = None
-            
-            attn_output = attn_output.transpose(1, 2).contiguous().view(B, L, D)
-
+        
+        # Reshape and project output
+        attn_output = attn_output.transpose(1, 2).contiguous().view(B, L, D)
         return self.out_proj(attn_output)
 
 
@@ -248,7 +225,6 @@ class BBTransformer(nn.Module):
         n_kv_heads: Optional[int] = 4,
         return_attn_weights: bool = False,
         stochastic_depth_rate: float = 0.09,
-        use_flash_attn: bool = True,
     ):
         super().__init__()
         self.feature_dim = feature_dim
@@ -302,8 +278,7 @@ class BBTransformer(nn.Module):
                     n_heads=num_heads,
                     n_kv_heads=n_kv_heads,
                     dropout=dropout_attn,
-                    return_attn_weights=return_attn_weights,
-                    use_flash=use_flash_attn
+                    return_attn_weights=return_attn_weights
                 ),
                 'drop_path1': DropPath(dpr[i]),
                 'norm_post_attn': RMSNorm(embed_dim),
@@ -481,8 +456,6 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         'n_kv_heads': 4,
         # Regularization
         'stochastic_depth_rate': 0.09,
-        # Performance
-        'use_flash_attn': True,
         # Debug/interpretability
         'return_attn_weights': False
     }
@@ -509,8 +482,7 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         temp_attn_hidden=default_config['temp_attn_hidden'],
         n_kv_heads=default_config['n_kv_heads'],
         return_attn_weights=default_config['return_attn_weights'],
-        stochastic_depth_rate=default_config['stochastic_depth_rate'],
-        use_flash_attn=default_config['use_flash_attn']
+        stochastic_depth_rate=default_config['stochastic_depth_rate']
     )
 
 
