@@ -13,7 +13,7 @@ from typing import Any
 
 
 # ======================
-# LOSS FUNCTION (Improved)
+# LOSS FUNCTION 
 # ======================
 
 class AdaptiveFocalLoss(nn.Module):
@@ -159,3 +159,4 @@ def train_model(
         model.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
 
     return model
+
