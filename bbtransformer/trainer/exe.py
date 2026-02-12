@@ -32,7 +32,16 @@ def run_analysis(
     random_seed: int = 42,
     device: Optional[str] = None,
     save_plots: bool = False,
-    save_json: bool = True
+    save_json: bool = True,
+    # Training control
+    early_stop_metric: str = "f1",
+    use_focal_loss: bool = False,
+    training_config: Optional[Dict[str, Any]] = None,
+    # Model architecture override
+    model_config: Optional[Dict[str, Any]] = None,
+    # Importance control
+    importance_metric: str = "f1",
+    importance_n_repeats: int = 30
 ) -> Dict[str, Any]:
     """
     Runs the full BBTransformer classification pipeline for a single disorder.
@@ -63,20 +72,33 @@ def run_analysis(
         Whether to save evaluation and importance plots to disk.
     save_json : bool
         Whether to save a JSON summary of results after analysis.
+    early_stop_metric : str
+        Metric for early stopping: 'f1' or 'loss'.
+    use_focal_loss : bool
+        Whether to use adaptive focal loss (for imbalanced data).
+    training_config : dict, optional
+        Override default training hyperparameters:
+        - epochs (int)
+        - lr (float)
+        - weight_decay (float)
+        - patience (int)
+    model_config : dict, optional
+        Override default model hyperparameters (e.g., dropout, embed_dim).
+    importance_metric : str
+        Metric for permutation importance: 'f1' or 'loss'.
+    importance_n_repeats : int
+        Number of repeats for permutation importance computation.
 
     Returns
     -------
     dict : Contains metrics, trained model, metadata, and (optionally) importance scores.
     """
-    # Set device automatically if not specified
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Ensure output directories exist
     Path('weights').mkdir(exist_ok=True)
     Path('results').mkdir(exist_ok=True)
 
-    # Resolve data paths
     if data_path is not None and pheno_path is not None:
         DATA_PATH = data_path
         PHENO_PATH = pheno_path
@@ -86,13 +108,11 @@ def run_analysis(
     else:
         raise ValueError("Either (data_path and pheno_path) or base_dir must be provided.")
 
-    # Validate input files
     if not os.path.exists(DATA_PATH):
         raise FileNotFoundError(f"fMRI data not found: {DATA_PATH}")
     if not os.path.exists(PHENO_PATH):
         raise FileNotFoundError(f"Phenotype file not found: {PHENO_PATH}")
 
-    # Handle pretrained weights
     WEIGHT_PATH = None
     if use_pretrained:
         if pretrained_weight_file is None:
@@ -101,7 +121,6 @@ def run_analysis(
         if not os.path.exists(WEIGHT_PATH):
             raise FileNotFoundError(f"Pretrained weights not found: {WEIGHT_PATH}")
 
-    # Step 1: Load data
     print("=" * 60)
     print(f"STEP 1: Loading Data for Target = '{target_column}'")
     print(f"  fMRI: {DATA_PATH}")
@@ -128,7 +147,6 @@ def run_analysis(
         raise ValueError(f"Missing columns in phenotype: {missing}")
     print("All required columns present")
 
-    # Step 2: Prepare data loaders
     print("\n" + "=" * 60)
     print("STEP 2: Preparing Data Loaders")
     print("=" * 60)
@@ -151,7 +169,6 @@ def run_analysis(
         if key not in ['age_mean', 'age_std']:
             print(f"  {key}: {value}")
 
-    # Step 3: Initialize model
     print("\n" + "=" * 60)
     print("STEP 3: Initializing BBTransformer")
     print("=" * 60)
@@ -159,7 +176,7 @@ def run_analysis(
     torch.cuda.empty_cache()
     gc.collect()
 
-    BEST_HP = {
+    DEFAULT_BEST_HP = {
         'feature_dim': metadata['feature_dim'],
         'num_classes': 1,
         'embed_dim': 512,
@@ -179,10 +196,12 @@ def run_analysis(
         'return_attn_weights': False
     }
 
-    model = create_bbtransformer(BEST_HP)
+    if model_config is not None:
+        DEFAULT_BEST_HP.update(model_config)
+
+    model = create_bbtransformer(DEFAULT_BEST_HP)
     print(f"Model created on {device} with {model.count_parameters():,} parameters")
 
-    # Step 3.5: Load pretrained weights (optional)
     if use_pretrained:
         print("\n" + "=" * 60)
         print("STEP 3.5: Loading Pretrained Weights")
@@ -195,26 +214,33 @@ def run_analysis(
     else:
         print("\n[INFO] Training from scratch (no pretrained weights).")
 
-    # Step 4: Train model
     print("\n" + "=" * 60)
     print("STEP 4: Training")
     print("=" * 60)
+
+    default_train_cfg = {
+        'epochs': 10000,
+        'lr': 3e-4,
+        'weight_decay': 2.3798658050870825e-05,
+        'patience': 90
+    }
+    if training_config:
+        default_train_cfg.update(training_config)
 
     trained_model = train_model(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
-        epochs=10000,
-        lr=3e-4,
-        weight_decay=2.3798658050870825e-05,
-        patience=90,
-        use_focal_loss=False
+        epochs=default_train_cfg['epochs'],
+        lr=default_train_cfg['lr'],
+        weight_decay=default_train_cfg['weight_decay'],
+        patience=default_train_cfg['patience'],
+        use_focal_loss=use_focal_loss,
+        early_stop_metric=early_stop_metric
     )
 
-    # Step 4.5: Save final weights
     save_model_weights(trained_model, target_name=target_column, safe_format=True)
 
-    # Step 5: Evaluate on test set
     print("\n" + "=" * 60)
     print("STEP 5: Test Set Evaluation")
     print("=" * 60)
@@ -234,7 +260,6 @@ def run_analysis(
     if save_plots:
         plot_results(metrics, probs, targets, save_path=f'results/{target_column}_results.png')
 
-    # Step 6: Permutation importance (conditional)
     importance_scores = None
     if compute_importance:
         print("\n" + "=" * 60)
@@ -245,9 +270,10 @@ def run_analysis(
             trained_model,
             val_loader,
             feature_dim=metadata['feature_dim'],
-            n_repeats=30,
+            n_repeats=importance_n_repeats,
             seed=random_seed,
-            target_name=target_column
+            target_name=target_column,
+            metric=importance_metric
         )
 
         save_top_importance_to_csv(
@@ -270,7 +296,6 @@ def run_analysis(
     else:
         print("\n[INFO] Skipping permutation importance (compute_importance=False).")
 
-    # Step 7: Save JSON summary (optional)
     json_results = {
         'target': target_column,
         'metrics': {
@@ -284,10 +309,6 @@ def run_analysis(
         },
         'importance_top_rois': None
     }
-
-    if 'confusion_matrix' in metrics:
-        cm = metrics['confusion_matrix']
-        json_results['metrics']['confusion_matrix'] = cm.tolist() if hasattr(cm, 'tolist') else cm
 
     if compute_importance and importance_scores is not None:
         top_indices = np.argsort(importance_scores)[-10:][::-1]
