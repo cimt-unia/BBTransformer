@@ -53,13 +53,19 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         'num_heads': num_heads,
         'num_layers': trial.suggest_int('num_layers', *get('num_layers_range', (5, 7))),
         
-        # Decoupled dropout rates (key improvement in new implementation)
-        'dropout_input': trial.suggest_float('dropout_input', 0.1, 0.25),
-        'dropout_patch': trial.suggest_float('dropout_patch', 0.1, 0.25),
-        'dropout_attn': trial.suggest_float('dropout_attn', 0.08, 0.2),
-        'dropout_ffn': trial.suggest_float('dropout_ffn', 0.1, 0.3),
-        'dropout_classifier': trial.suggest_float('dropout_classifier', 0.02, 0.1),
-        'dropout_temporal': trial.suggest_float('dropout_temporal', 0.1, 0.25),
+        # Decoupled dropout rates - USE CUSTOM RANGES FROM search_config
+        'dropout_input': trial.suggest_float('dropout_input', 
+            *get('dropout_input_range', (0.1, 0.25))),
+        'dropout_patch': trial.suggest_float('dropout_patch', 
+            *get('dropout_patch_range', (0.1, 0.25))),
+        'dropout_attn': trial.suggest_float('dropout_attn', 
+            *get('dropout_attn_range', (0.08, 0.2))),
+        'dropout_ffn': trial.suggest_float('dropout_ffn', 
+            *get('dropout_ffn_range', (0.1, 0.3))),
+        'dropout_classifier': trial.suggest_float('dropout_classifier', 
+            *get('dropout_classifier_range', (0.02, 0.1))),
+        'dropout_temporal': trial.suggest_float('dropout_temporal', 
+            *get('dropout_temporal_range', (0.1, 0.25))),
         
         # Embedding dimensions
         'embed_dim_age': trial.suggest_categorical('embed_dim_age', get('embed_dim_age', [16, 32, 64])),
@@ -76,7 +82,8 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         'n_kv_heads': trial.suggest_categorical('n_kv_heads', valid_kv_heads),
         
         # Stochastic depth (new in updated implementation)
-        'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 0.0, 0.2),
+        'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 
+            *get('stochastic_depth_range', (0.0, 0.2))),
         
         # FlashAttention (new feature)
         'use_flash_attn': get('use_flash_attn', True),
@@ -99,18 +106,19 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         torch.backends.cudnn.benchmark = False
 
     # --- Model Creation ---
+    print(f"\n[Trial {trial.number}] Creating model...")
     try:
         model = create_bbtransformer(config)
-        
-        # Log model size
         n_params = model.count_parameters()
         trial.set_user_attr("n_parameters", n_params)
+        print(f"[Trial {trial.number}] Model created: {n_params:,} parameters")
         
     except Exception as e:
         print(f"❌ Trial {trial.number} failed during model creation: {str(e)}")
         raise optuna.TrialPruned()
 
     # --- Training ---
+    print(f"[Trial {trial.number}] Starting training (max {get('epochs', 10000)} epochs)...")
     try:
         trained_model = train_model(
             model=model,
@@ -123,11 +131,15 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
             use_focal_loss=get('use_focal_loss', False),
             early_stop_metric=get('early_stop_metric', "f1")
         )
+        print(f"[Trial {trial.number}] Training completed")
     except Exception as e:
         print(f"❌ Trial {trial.number} failed during training: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise optuna.TrialPruned()
 
     # --- Evaluation ---
+    print(f"[Trial {trial.number}] Evaluating...")
     try:
         metrics, _, _ = evaluate_model(trained_model, val_loader)
     except Exception as e:
@@ -183,13 +195,16 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     trial.set_user_attr("composite", composite)
     trial.set_user_attr("valid", valid)
     
+    # Print trial results
+    print(f"[Trial {trial.number}] Results:")
+    print(f"   F1: {f1:.4f}, ROC-AUC: {roc_auc:.4f}, Acc: {accuracy:.4f}")
+    print(f"   Composite: {composite:.4f}, Valid: {valid}")
+    
     # Return value for optimization
     if valid:
-        # Minimize negative composite (maximize composite)
-        return -composite
+        return -composite  # Minimize negative composite (maximize composite)
     else:
-        # Return penalty based on worst metric
-        return 1.0 - min(metric_vals)
+        return 1.0 - min(metric_vals)  # Penalty based on worst metric
 
 
 def tune_hyperparameters(
@@ -255,6 +270,8 @@ def tune_hyperparameters(
     print(f"{'='*80}")
     print(f"Study: {study_name}")
     print(f"Trials: {n_trials}")
+    print(f"Epochs per trial: {search_config.get('epochs', 10000)}")
+    print(f"Patience: {search_config.get('patience', 90)}")
     print(f"Metric Threshold: {search_config.get('metric_threshold', 0.60)}")
     print(f"{'='*80}\n")
     
