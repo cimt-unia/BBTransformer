@@ -40,7 +40,7 @@ def run_analysis(
     # Model architecture override
     model_config: Optional[Dict[str, Any]] = None,
     # Importance control
-    importance_metric: str = "f1",
+    importance_metric: str = "loss",
     importance_n_repeats: int = 30
 ) -> Dict[str, Any]:
     """
