@@ -172,25 +172,20 @@ class BBTransformer(nn.Module):
     def __init__(self, 
                  feature_dim, 
                  num_classes=1, 
-                 embed_dim=256, 
+                 embed_dim=512,          
                  num_heads=8,
                  num_layers=6, 
-                 # === DROPOUTS (decoupled for fine control) ===
-                 dropout_input=0.1,
-                 dropout_attn=0.1,
-                 dropout_ffn=0.1,
-                 dropout_classifier=0.1,
-                 dropout_temporal=0.05,
-                 # === EMBEDDING DIMENSIONS ===
-                 embed_dim_age=16,
+                 dropout_input=0.27,
+                 dropout_attn=0.15,
+                 dropout_ffn=0.28,
+                 dropout_classifier=0.03,
+                 dropout_temporal=0.17,
+                 embed_dim_age=32,       
                  embed_dim_ext=16,
-                 # === MULTI-SCALE ===
-                 patch_size=2,
-                 patch_embed_ratio=0.5,  # fraction of embed_dim for short-scale
-                 # === TEMPORAL ATTENTION ===
-                 temp_attn_hidden=64,
-                 # === GQA ===
-                 n_kv_heads=None,  # if None, auto-computed; if int, used directly
+                 patch_size=3,          
+                 patch_embed_ratio=0.5,
+                 temp_attn_hidden=128,  
+                 n_kv_heads=4,          
                  return_attn_weights=False):
         super().__init__()
         self.embed_dim = embed_dim
@@ -439,4 +434,5 @@ def load_pretrained_bbtransformer(weights_path: str, config: dict) -> BBTransfor
     model.load_state_dict(model_state)
     
     return model
+
 
