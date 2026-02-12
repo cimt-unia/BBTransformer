@@ -9,26 +9,35 @@ from typing import Optional, Dict, Tuple, Any, List
 # ======================
 # TRANSFORMER COMPONENTS
 # ======================
+
 class RMSNorm(nn.Module):
-    def __init__(self, dim, eps=1e-6):
+    """Numerically stable RMSNorm with FP32 intermediate computation."""
+    def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
     
-    def forward(self, x):
-        norm = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        return x * norm * self.weight
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        dtype = x.dtype
+        x_f32 = x.float()
+        variance = x_f32.pow(2).mean(-1, keepdim=True)
+        x_norm = x_f32 * torch.rsqrt(variance + self.eps)
+        return (self.weight * x_norm).to(dtype)
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, d_model, d_ff):
+    def __init__(self, d_model: int, d_ff: int, dropout_ffn: float = 0.0):
         super().__init__()
         self.w1 = nn.Linear(d_model, d_ff, bias=False)
         self.w2 = nn.Linear(d_ff, d_model, bias=False)
         self.w3 = nn.Linear(d_model, d_ff, bias=False)
+        self.dropout = nn.Dropout(dropout_ffn) if dropout_ffn > 0 else nn.Identity()
     
-    def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.dropout(x)
+
+
 
 
 class RotaryEmbedding(nn.Module):
@@ -169,46 +178,52 @@ class GQAWithRoPE(nn.Module):
 #  MODEL ARCHITECTURE
 # ======================
 class BBTransformer(nn.Module):
-    def __init__(self, 
-                 feature_dim, 
-                 num_classes=1, 
-                 embed_dim=512,          
-                 num_heads=8,
-                 num_layers=6, 
-                 dropout_input=0.27,
-                 dropout_attn=0.15,
-                 dropout_ffn=0.28,
-                 dropout_classifier=0.03,
-                 dropout_temporal=0.17,
-                 embed_dim_age=32,       
-                 embed_dim_ext=16,
-                 patch_size=3,          
-                 patch_embed_ratio=0.5,
-                 temp_attn_hidden=128,  
-                 n_kv_heads=4,          
-                 return_attn_weights=False):
+    def __init__(
+        self,
+        feature_dim,
+        num_classes=1,
+        embed_dim=256,
+        num_heads=8,
+        num_layers=6,
+        dropout_input=0.15,
+        dropout_patch=0.15,
+        dropout_attn=0.13,
+        dropout_ffn=0.16,
+        dropout_classifier=0.05,
+        dropout_temporal=0.15,
+        embed_dim_age=32,
+        embed_dim_ext=16,
+        patch_size=3,
+        patch_embed_ratio=0.5,
+        temp_attn_hidden=64,
+        n_kv_heads=4,
+        return_attn_weights=False,
+        stochastic_depth_rate=0.09,
+    ):
         super().__init__()
+        self.feature_dim = feature_dim
         self.embed_dim = embed_dim
         self.patch_size = patch_size
         self.patch_embed_dim = int(embed_dim * patch_embed_ratio)
         self.return_attn_weights = return_attn_weights
+        self.num_layers = num_layers
+        self.stochastic_depth_rate = stochastic_depth_rate
 
-        # --- Input projection ---
+        self.input_norm = RMSNorm(feature_dim)
+
         self.input_proj = nn.Sequential(
             nn.Linear(feature_dim, embed_dim, bias=False),
             RMSNorm(embed_dim),
             nn.Dropout(dropout_input)
         )
 
-        # --- Patch embedding (short-scale) ---
         self.patch_embed = PatchEmbedding(
             patch_size=patch_size,
             in_dim=embed_dim,
             embed_dim=self.patch_embed_dim,
-            dropout=dropout_input  # or use separate patch_dropout if needed
+            dropout=dropout_patch
         )
 
-        # --- Temporal attention for global pooling ---
         self.temporal_attn = nn.Sequential(
             nn.Linear(embed_dim, temp_attn_hidden, bias=True),
             nn.Tanh(),
@@ -218,12 +233,10 @@ class BBTransformer(nn.Module):
         
         self.last_attention_maps = {}
 
-        # --- GQA configuration ---
         if n_kv_heads is None:
             n_kv_heads = num_heads // 4 if num_heads >= 8 else max(1, num_heads // 2)
         self.n_kv_heads = n_kv_heads
 
-        # --- Transformer layers ---
         self.layers = nn.ModuleList()
         for i in range(num_layers):
             layer = nn.ModuleDict({
@@ -237,23 +250,19 @@ class BBTransformer(nn.Module):
                 ),
                 'norm_post_attn': RMSNorm(embed_dim),
                 'norm2': RMSNorm(embed_dim),
-                'ffn': SwiGLU(embed_dim, embed_dim * 4),
+                'ffn': SwiGLU(embed_dim, embed_dim * 4, dropout_ffn=dropout_ffn),
                 'norm_post_ffn': RMSNorm(embed_dim),
-                'dropout': nn.Dropout(dropout_ffn)
             })
             self.layers.append(layer)
 
-        # --- Cross-attention ---
         self.cross_attn = nn.MultiheadAttention(
             embed_dim, num_heads, dropout=dropout_attn, batch_first=True
         )
         self.cross_norm = RMSNorm(embed_dim)
 
-        # --- Confounder embeddings ---
         self.age_proj = nn.Linear(1, embed_dim_age)
         self.ext_embed = nn.Embedding(2, embed_dim_ext)
 
-        # --- Final classifier ---
         total_input = embed_dim + self.patch_embed_dim + embed_dim_age + embed_dim_ext
         self.classifier = nn.Sequential(
             nn.Linear(total_input, embed_dim, bias=False),
@@ -267,45 +276,58 @@ class BBTransformer(nn.Module):
             nn.Linear(embed_dim // 2, num_classes, bias=True)
         )
 
-        self.apply(self._init_weights)
+        self._init_weights()
 
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            nn.init.xavier_uniform_(module.weight, gain=0.02)
-            if module.bias is not None:
-                nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            nn.init.normal_(module.weight, std=0.02)
+    def _init_weights(self):
+        for name, module in self.named_modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0.0, std=0.01)
+                if any(kw in name for kw in ['out_proj', 'w2', 'classifier']):
+                    nn.init.normal_(module.weight, mean=0.0, std=0.001)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                nn.init.normal_(module.weight, std=0.02)
 
     def forward(self, x, age, ext):
         B, T, D = x.shape
-        
-        # Input projection
-        x = self.input_proj(x)
+        assert D == self.feature_dim, f"Expected feature_dim={self.feature_dim}, got {D}"
 
-        # Short-scale
+        x = self.input_norm(x)
+        x = self.input_proj(x)
         x_short = self.patch_embed(x)
         global_short = x_short.mean(dim=1)
 
-        # Main transformer
         if self.return_attn_weights:
             self.last_attention_maps = {'main': [], 'cross': None}
         
         for i, layer in enumerate(self.layers):
-            # Attention
             residual = x
             x = layer['norm1'](x)
             x = layer['attn'](x)
-            x = layer['dropout'](x)
-            x = residual + x
+            
+            if self.training and self.stochastic_depth_rate > 0:
+                survival_prob = 1.0 - self.stochastic_depth_rate * (i / max(1, self.num_layers - 1))
+                if torch.rand(1, device=x.device).item() <= survival_prob:
+                    x = residual + x
+                else:
+                    x = residual
+            else:
+                x = residual + x
             x = layer['norm_post_attn'](x)
 
-            # FFN
             residual = x
             x = layer['norm2'](x)
             x = layer['ffn'](x)
-            x = layer['dropout'](x)
-            x = residual + x
+            
+            if self.training and self.stochastic_depth_rate > 0:
+                survival_prob = 1.0 - self.stochastic_depth_rate * (i / max(1, self.num_layers - 1))
+                if torch.rand(1, device=x.device).item() <= survival_prob:
+                    x = residual + x
+                else:
+                    x = residual
+            else:
+                x = residual + x
             x = layer['norm_post_ffn'](x)
             
             if self.return_attn_weights and hasattr(layer['attn'], 'last_attn_weights'):
@@ -314,7 +336,6 @@ class BBTransformer(nn.Module):
                         layer['attn'].last_attn_weights.cpu().detach()
                     )
 
-        # Multi-scale fusion
         x_short_up = F.interpolate(
             x_short.transpose(1, 2), size=T, mode='linear', align_corners=False
         ).transpose(1, 2)
@@ -333,16 +354,11 @@ class BBTransformer(nn.Module):
             cross_attended, _ = self.cross_attn(x, x_short_padded, x_short_padded)
         
         x = self.cross_norm(x + cross_attended)
-
-        # Temporal pooling
         attn_weights = F.softmax(self.temporal_attn(x), dim=1)
         global_main = torch.sum(x * attn_weights, dim=1)
 
-        # Confounders
         age_emb = self.age_proj(age.unsqueeze(1))
         ext_emb = self.ext_embed(ext)
-
-        # Final fusion
         combined = torch.cat([global_main, global_short, age_emb, ext_emb], dim=1)
         logits = self.classifier(combined).squeeze(-1)
         return logits
@@ -355,35 +371,37 @@ class BBTransformer(nn.Module):
 
 
 
-
 # ======================
 # CONFIGURATION
 # ======================
 def create_bbtransformer(config: dict) -> BBTransformer:
     """Factory function to create a BBTransformer with full configuration support"""
     default_config = {
-        # Core
+        # Core architecture
         'feature_dim': 414,
         'num_classes': 1,
         'embed_dim': 256,
         'num_heads': 8,
         'num_layers': 6,
-        # Dropouts (decoupled)
-        'dropout_input': 0.1,
-        'dropout_attn': 0.1,
-        'dropout_ffn': 0.1,
-        'dropout_classifier': 0.1,
-        'dropout_temporal': 0.05,
+        # Dropout configuration (decoupled streams)
+        'dropout_input': 0.15,
+        'dropout_patch': 0.15,
+        'dropout_attn': 0.13,
+        'dropout_ffn': 0.16,
+        'dropout_classifier': 0.05,
+        'dropout_temporal': 0.15,
         # Confounder embeddings
-        'embed_dim_age': 16,
+        'embed_dim_age': 32,
         'embed_dim_ext': 16,
-        # Multi-scale
-        'patch_size': 2,
+        # Patching
+        'patch_size': 3,
         'patch_embed_ratio': 0.5,
         # Temporal attention
         'temp_attn_hidden': 64,
-        # GQA
-        'n_kv_heads': None,  # Auto-computed if None
+        # GQA configuration
+        'n_kv_heads': 4,
+        # Stochastic depth
+        'stochastic_depth_rate': 0.09,
         # Debug/interpretability
         'return_attn_weights': False
     }
@@ -391,7 +409,6 @@ def create_bbtransformer(config: dict) -> BBTransformer:
     # Override defaults with user config
     default_config.update(config)
     
-    # Pass all relevant args to BBTransformer
     return BBTransformer(
         feature_dim=default_config['feature_dim'],
         num_classes=default_config['num_classes'],
@@ -399,6 +416,7 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         num_heads=default_config['num_heads'],
         num_layers=default_config['num_layers'],
         dropout_input=default_config['dropout_input'],
+        dropout_patch=default_config['dropout_patch'],
         dropout_attn=default_config['dropout_attn'],
         dropout_ffn=default_config['dropout_ffn'],
         dropout_classifier=default_config['dropout_classifier'],
@@ -409,13 +427,13 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         patch_embed_ratio=default_config['patch_embed_ratio'],
         temp_attn_hidden=default_config['temp_attn_hidden'],
         n_kv_heads=default_config['n_kv_heads'],
-        return_attn_weights=default_config['return_attn_weights']
+        return_attn_weights=default_config['return_attn_weights'],
+        stochastic_depth_rate=default_config['stochastic_depth_rate']
     )
 
 
-
 def load_pretrained_bbtransformer(weights_path: str, config: dict) -> BBTransformer:
-    """Load a pretrained BBTransformer model"""
+    """Load a pretrained BBTransformer model with flexible weight loading"""
     model = create_bbtransformer(config)
     
     # Load weights
@@ -425,14 +443,18 @@ def load_pretrained_bbtransformer(weights_path: str, config: dict) -> BBTransfor
     if 'model_state_dict' in state_dict:
         state_dict = state_dict['model_state_dict']
     
-    # Filter out keys that don't match
+    # Filter out keys that don't match current model
     model_state = model.state_dict()
-    pretrained_state = {k: v for k, v in state_dict.items() if k in model_state and v.shape == model_state[k].shape}
+    pretrained_state = {
+        k: v for k, v in state_dict.items() 
+        if k in model_state and v.shape == model_state[k].shape
+    }
     
-    # Update the model's state dict
+    # Update model with pretrained weights
     model_state.update(pretrained_state)
     model.load_state_dict(model_state)
     
     return model
+
 
 
