@@ -12,7 +12,8 @@ from tqdm import tqdm
 from sklearn.metrics import f1_score
 from torch.amp import autocast 
 from .eval import evaluate_model
-from ..utils import load_roi_names  
+from ..utils import load_roi_names  # kept for backward compatibility
+
 
 def calculate_permutation_importance(
     model, 
@@ -24,7 +25,7 @@ def calculate_permutation_importance(
     metric="f1"  
 ):
     """
-    Calculate permutation importance for brain regions (memory-efficient)
+    Calculate permutation importance for brain regions
     
     Args:
         model: Trained BBTransformer
@@ -132,32 +133,38 @@ def _compute_validation_loss(model, data_loader, device):
 
 def save_top_importance_to_csv(
     importance_scores,
-    roi_names=None,
+    roi_metadata=None,  # ← Accept full metadata DataFrame
     target_name="target",
     top_n=30,
     save_path=None
 ):
     """
-    Save top permutation importance scores to CSV (no plots, no numpy)
+    Save top permutation importance scores to CSV with full ROI metadata.
     
     Args:
         importance_scores: Array of importance scores (length = 414)
-        roi_names: Array of ROI names (length = 414)
-        target_name: Name of target variable (e.g., 'Sex', 'ICD_F32_Depressive_Episode')
+        roi_metadata: Full ROI metadata DataFrame (from load_roi_metadata())
+        target_name: Name of target variable
         top_n: Number of top regions to save
-        save_path: Output CSV path (e.g., 'importance_Sex.csv')
+        save_path: Output CSV path
     
     Returns:
         pd.DataFrame: Full importance table (all 414 regions, sorted)
     """
     assert len(importance_scores) == 414, "Expected 414 regions"
     
-    # Create full DataFrame
-    df = pd.DataFrame({
-        'roi_index': np.arange(414),
-        'roi_name': roi_names if roi_names is not None else [f'Region_{i}' for i in range(414)],
-        f'importance_{target_name}': importance_scores
-    })
+    if roi_metadata is not None:
+        # Use full metadata (preferred)
+        df = roi_metadata.copy()
+        df[f'importance_{target_name}'] = importance_scores
+    else:
+        # Fallback to names only (backward compatibility)
+        roi_names = load_roi_names()
+        df = pd.DataFrame({
+            'roi_index': np.arange(414),
+            'roi_name': roi_names,
+            f'importance_{target_name}': importance_scores
+        })
     
     # Sort by importance (descending)
     df = df.sort_values(f'importance_{target_name}', ascending=False).reset_index(drop=True)
@@ -167,7 +174,7 @@ def save_top_importance_to_csv(
         save_path = f'importance_{target_name}.csv'
     
     df.head(top_n).to_csv(save_path, index=False)
-    print(f"✅ Saved top {top_n} features to: {save_path}")
+    print(f"Saved top {top_n} features to: {save_path}")
     
     return df
 
