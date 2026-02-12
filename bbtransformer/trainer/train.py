@@ -17,11 +17,6 @@ from typing import Any
 # ======================
 
 class AdaptiveFocalLoss(nn.Module):
-    """
-    Adaptive Focal Loss 
-    Dynamically adjusts balancing factor (alpha) using EMA of predicted positive probability.
-    More stable than batch-label-based alpha.
-    """
     def __init__(self, gamma: float = 2.0, momentum: float = 0.99, eps: float = 1e-7):
         super().__init__()
         self.gamma = gamma
@@ -58,7 +53,7 @@ def train_model(
     lr: float = 3e-4,
     weight_decay: float = 1e-4,
     patience: int = 100,
-    use_focal_loss: bool = True,
+    use_focal_loss: bool = False,
     early_stop_metric: str = "f1"  
 ):
     """
@@ -70,7 +65,7 @@ def train_model(
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
-    # ✅ Ranger21 with internal LR scheduling (no external scheduler!)
+    #  Ranger21 with internal LR scheduling (no external scheduler)
     total_steps = epochs * len(train_loader)
     optimizer = Ranger21(
         model.parameters(),
@@ -80,7 +75,7 @@ def train_model(
         disable_lr_scheduler=False  # keep internal warmup + decay
     )
 
-    # ✅ Fixed loss: use improved AdaptiveFocalLoss or BCE
+    # 
     criterion = AdaptiveFocalLoss(gamma=2.0, momentum=0.99) if use_focal_loss else nn.BCEWithLogitsLoss()
 
     scaler = GradScaler()
@@ -153,4 +148,5 @@ def train_model(
         model.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
 
     return model
+
 
