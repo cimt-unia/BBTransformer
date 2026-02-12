@@ -3,26 +3,20 @@
 
 import os
 import gc
-from pathlib import Path
-from typing import Optional, Dict, Any
-
 import torch
 import numpy as np
 import pandas as pd
-
-# Import from your bbtransformer library
-from bbtransformer import (
-    prepare_fmri_data,
-    load_roi_names,
-    create_bbtransformer,
-    train_model,
-    evaluate_model,
-    plot_results,
+from pathlib import Path
+from typing import Optional, Dict, Any
+from ..utils import load_roi_names, load_model_weights, save_model_weights
+from ..model import create_bbtransformer
+from .loader import prepare_fmri_data
+from .train import train_model
+from .eval import evaluate_model, plot_results
+from .rank import (
     calculate_permutation_importance,
     save_top_importance_to_csv,
-    plot_importance,
-    load_model_weights,
-    save_model_weights
+    plot_importance
 )
 
 
