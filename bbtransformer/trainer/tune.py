@@ -39,7 +39,6 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         'dropout_temporal': trial.suggest_float('dropout_temporal', 0.0, 0.2),
         'embed_dim_age': trial.suggest_categorical('embed_dim_age', [8, 16, 32]),
         'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', [8, 16, 32]),
-        # Divisors of 490 for patch_size
         'patch_size': 3,
         'patch_embed_ratio': trial.suggest_float('patch_embed_ratio', 0.5, 1.0, step=0.25),
         'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', [32, 64, 128]),
@@ -165,3 +164,4 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     print("="*60)
 
     return study.best_params, study
+
