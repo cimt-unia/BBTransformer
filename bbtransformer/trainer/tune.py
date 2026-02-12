@@ -9,6 +9,7 @@ from ..model import create_bbtransformer
 from .train import train_model  
 from sklearn.metrics import f1_score, roc_auc_score
 
+
 # ======================
 # HYPERPARAMETER TUNING 
 # ======================
@@ -38,27 +39,17 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         'dropout_temporal': trial.suggest_float('dropout_temporal', 0.0, 0.2),
         'embed_dim_age': trial.suggest_categorical('embed_dim_age', [8, 16, 32]),
         'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', [8, 16, 32]),
-        'patch_size': trial.suggest_categorical('patch_size', get('patch_size', [2, 4, 6, 8])),
+        # Divisors of 490 for patch_size
+        'patch_size': 3,
         'patch_embed_ratio': trial.suggest_float('patch_embed_ratio', 0.5, 1.0, step=0.25),
         'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', [32, 64, 128]),
         'n_kv_heads': trial.suggest_categorical('n_kv_heads', [None, 2, 4, 8]),
         'return_attn_weights': False,
     }
 
-    # ✅ LR range with fallback
-    lr_min, lr_max = get('lr_range', (1e-5, 1e-3))
-    lr = trial.suggest_float('lr', lr_min, lr_max, log=True)
-    
+    # LR and weight decay 
+    lr = trial.suggest_float('lr', *get('lr_range', (1e-5, 1e-3)), log=True)
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True)
-    
-    T_0_min, T_0_max = get('T_0_range', (15, 100))
-    T_0 = trial.suggest_int('T_0', T_0_min, T_0_max)
-
-    # ✅ Gamma range with fallback
-    gamma_min, gamma_max = get('gamma_range', (1.0, 3.0))
-    gamma = trial.suggest_float('gamma', gamma_min, gamma_max)
-    loss_type = 'adaptive_focal'
-    loss_params = {'gamma': gamma}
 
     # --- Reproducibility ---
     seed = 42 + trial.number
@@ -70,7 +61,7 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     # --- Model ---
     model = create_bbtransformer(config)
 
-    # ✅ Full training pipeline
+    # Updated training call 
     try:
         trained_model = train_model(
             model=model,
@@ -80,10 +71,7 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
             lr=lr,
             weight_decay=weight_decay,
             patience=get('patience', 20),
-            T_0=T_0,
-            eta_min=1e-6,
-            loss_type=loss_type,
-            loss_params=loss_params,
+            use_focal_loss=False,      # ← balanced data
             early_stop_metric="f1"
         )
     except Exception as e:
@@ -107,20 +95,20 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
             all_probs.extend(probs.ravel())
             all_targets.extend(labels.cpu().numpy().ravel())
 
-    # ✅ Compute F1 (primary metric for Optuna)
+    # Compute F1 (primary metric for Optuna)
     try:
         preds = (np.array(all_probs) > 0.5).astype(int)
         val_f1 = f1_score(all_targets, preds, zero_division=0)
     except:
         val_f1 = 0.0
 
-    # ✅ Compute AUC (for logging only)
+    # Compute AUC (for logging only)
     try:
         val_auc = roc_auc_score(all_targets, all_probs)
     except:
         val_auc = 0.5
 
-    # Log both for diagnostics (optional but helpful)
+    # Log both for diagnostics
     print(f"Trial {trial.number} | F1: {val_f1:.4f} | AUC: {val_auc:.4f}")
 
     trial.report(-val_f1, step=0)
@@ -128,6 +116,7 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         raise optuna.TrialPruned()
 
     return -val_f1
+
 
 def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, search_config=None):
     """
@@ -140,7 +129,6 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
         search_config (dict, optional): Override default search space.
             See optuna_objective for allowed keys.
     """
-    # Use MedianPruner (robust) or HyperbandPruner (faster, more aggressive)
     pruner = optuna.pruners.MedianPruner(
         n_startup_trials=10,   # don't prune first 10 trials
         n_warmup_steps=5,      # don't prune before epoch 5
@@ -153,7 +141,6 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
         study_name="bbtransformer_tuning_2025"
     )
 
-    # Wrap objective to pass search_config
     def objective(trial):
         return optuna_objective(trial, train_loader, val_loader, feature_dim, search_config)
 
@@ -165,7 +152,7 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     )
 
     print("\n" + "="*60)
-    print("✅ HYPERPARAMETER TUNING COMPLETE")
+    print("HYPERPARAMETER TUNING COMPLETE")
     print("="*60)
     pruned_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
     complete_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
@@ -178,5 +165,3 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     print("="*60)
 
     return study.best_params, study
-
-
