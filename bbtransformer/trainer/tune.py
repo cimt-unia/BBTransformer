@@ -20,7 +20,7 @@ from .eval import evaluate_model
 def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config=None):
     """
     Objective function for Optuna with support for new BBTransformer features.
-    Includes FlashAttention and proper dropout configuration.
+    Uses PyTorch's automatic FlashAttention optimization.
     """
     if search_config is None:
         search_config = {}
@@ -81,12 +81,9 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         # GQA configuration (must divide num_heads evenly)
         'n_kv_heads': trial.suggest_categorical('n_kv_heads', valid_kv_heads),
         
-        # Stochastic depth (new in updated implementation)
+        # Stochastic depth
         'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 
             *get('stochastic_depth_range', (0.0, 0.2))),
-        
-        # FlashAttention (new feature)
-        'use_flash_attn': get('use_flash_attn', True),
         
         # Interpretability
         'return_attn_weights': False,
@@ -220,7 +217,7 @@ def tune_hyperparameters(
 ):
     """
     Perform hyperparameter tuning with YFT-style composite scoring.
-    Enhanced for 2026 SOTA BBTransformer with FlashAttention and improved regularization.
+    Enhanced for 2026 SOTA BBTransformer with automatic FlashAttention and improved regularization.
     
     Args:
         train_loader: Training data loader
@@ -322,7 +319,7 @@ def tune_hyperparameters(
         'n_parameters': int(n_params) if n_params != "N/A" else n_params,
         'model_version': 'BBTransformer v2.0 (2026 SOTA)',
         'features': [
-            'FlashAttention-2 support',
+            'Automatic FlashAttention (PyTorch 2.0+)',
             'Proper DropPath regularization',
             'Decoupled dropout streams',
             'Improved weight initialization',
