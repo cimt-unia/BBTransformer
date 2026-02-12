@@ -120,10 +120,17 @@ def list_available_weights():
 # GT ATLAS UTILITIES
 # ======================
 
-def load_roi_names():
-    """Load built-in 414 ROI labels from Glasser+Tian atlas."""
+# ======================
+# GT ATLAS UTILITIES
+# ======================
+
+def load_roi_metadata():
+    """Load full 414 ROI metadata from Glasser+Tian atlas."""
     with pkg_resources.open_text('bbtransformer', 'roi_labels.csv') as f:
         df = pd.read_csv(f)
     assert len(df) == 414, f"Expected 414 ROIs, got {len(df)}"
-    return df['roi_name'].values
+    return df  # Returns full DataFrame with all columns
 
+def load_roi_names():
+    """Backward-compatible helper: return only ROI names."""
+    return load_roi_metadata()['roi_name'].values
