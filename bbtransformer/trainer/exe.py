@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Optional, Dict, Any
-from ..utils import load_roi_names, load_model_weights, save_model_weights
+from ..utils import load_roi_metadata, load_model_weights, save_model_weights
 from ..model import create_bbtransformer
 from .loader import prepare_fmri_data
 from .train import train_model
@@ -134,7 +134,9 @@ def run_analysis(
     data = features['data']
     subject_ids = features['subject_ids']
 
-    roi_names = load_roi_names()
+    # Load full ROI metadata
+    roi_metadata = load_roi_metadata()
+    roi_names = roi_metadata['roi_name'].values
     print(f"Loaded fMRI: {data.shape}")
     print(f"  Subjects: {len(subject_ids)}")
     print(f"  Timepoints: {data.shape[1]}")
@@ -276,9 +278,10 @@ def run_analysis(
             metric=importance_metric
         )
 
+        # Pass full metadata to CSV function
         save_top_importance_to_csv(
             importance_scores,
-            roi_names=roi_names,
+            roi_metadata=roi_metadata,  # ← KEY CHANGE
             target_name=target_column,
             top_n=10,
             save_path=f'results/importance_{target_column}.csv'
@@ -296,6 +299,7 @@ def run_analysis(
     else:
         print("\n[INFO] Skipping permutation importance (compute_importance=False).")
 
+    # Build JSON with full ROI metadata
     json_results = {
         'target': target_column,
         'metrics': {
@@ -312,7 +316,13 @@ def run_analysis(
 
     if compute_importance and importance_scores is not None:
         top_indices = np.argsort(importance_scores)[-10:][::-1]
-        json_results['importance_top_rois'] = [roi_names[i] for i in top_indices]
+        # Include full metadata for top ROIs
+        top_rois = []
+        for idx in top_indices:
+            row = roi_metadata.iloc[idx].to_dict()
+            row['importance_score'] = float(importance_scores[idx])
+            top_rois.append(row)
+        json_results['importance_top_rois'] = top_rois
 
     if save_json:
         json_path = f'results/{target_column}_results.json'
