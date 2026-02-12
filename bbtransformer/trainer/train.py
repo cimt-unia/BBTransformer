@@ -54,34 +54,33 @@ def train_model(
     weight_decay: float = 1e-4,
     patience: int = 100,
     use_focal_loss: bool = False,
-    early_stop_metric: str = "f1"  
+    early_stop_metric: str = "f1"
 ):
     """
     Train BBTransformer with Ranger21 and adaptive focal loss.
-    Early stopping based on validation F1 score.
+    Early stopping based on validation metric: 'f1' (default) or 'loss'.
     """
-    assert early_stop_metric == "f1", "Only F1-based early stopping is supported."
+    if early_stop_metric not in {"f1", "loss"}:
+        raise ValueError("early_stop_metric must be 'f1' or 'loss'")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
 
-    #  Ranger21 with internal LR scheduling (no external scheduler)
+    # Ranger21 with internal LR scheduling
     total_steps = epochs * len(train_loader)
     optimizer = Ranger21(
         model.parameters(),
         lr=lr,
         weight_decay=weight_decay,
         num_iterations=total_steps,
-        disable_lr_scheduler=False  # keep internal warmup + decay
+        disable_lr_scheduler=False
     )
 
-    # 
     criterion = AdaptiveFocalLoss(gamma=2.0, momentum=0.99) if use_focal_loss else nn.BCEWithLogitsLoss()
-
     scaler = GradScaler()
 
     # Early stopping state
-    best_f1 = -float('inf')
+    best_score = -float('inf') if early_stop_metric == "f1" else float('inf')
     best_model_state = None
     patience_counter = 0
 
@@ -94,14 +93,12 @@ def train_model(
             fmri = fmri.to(device, non_blocking=True)
             age = age.to(device, non_blocking=True)
             ext = ext.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True).float()
 
             optimizer.zero_grad(set_to_none=True)
-
             with autocast(device_type=device.type):
                 logits = model(fmri, age, ext)
                 loss = criterion(logits, labels)
-
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -113,34 +110,48 @@ def train_model(
         # ---------------------
         model.eval()
         all_probs, all_targets = [], []
+        total_val_loss = 0.0
+        n_samples = 0
+
         with torch.no_grad():
             for fmri, age, ext, labels in val_loader:
                 fmri = fmri.to(device, non_blocking=True)
                 age = age.to(device, non_blocking=True)
                 ext = ext.to(device, non_blocking=True)
-                labels = labels.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True).float()
 
                 with autocast(device_type=device.type):
                     logits = model(fmri, age, ext)
+                    loss = criterion(logits, labels)
+                    total_val_loss += loss.item() * labels.size(0)
+                    n_samples += labels.size(0)
+
                 probs = torch.sigmoid(logits).cpu().numpy()
                 all_probs.extend(probs.ravel())
                 all_targets.extend(labels.cpu().numpy())
 
-        # Compute F1
-        preds = (np.array(all_probs) > 0.5).astype(int)
-        val_f1 = f1_score(all_targets, preds, zero_division=0)
+        val_loss = total_val_loss / n_samples if n_samples > 0 else float('inf')
+
+        # Compute F1 only if needed
+        if early_stop_metric == "f1":
+            preds = (np.array(all_probs) > 0.5).astype(int)
+            val_score = f1_score(all_targets, preds, zero_division=0)
+        else:  # "loss"
+            val_score = val_loss
 
         # ---------------------
         # Early Stopping
         # ---------------------
-        if val_f1 > best_f1:
-            best_f1 = val_f1
+        is_better = (val_score > best_score) if early_stop_metric == "f1" else (val_score < best_score)
+        if is_better:
+            best_score = val_score
             best_model_state = {k: v.cpu() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"Early stopping at epoch {epoch+1} (F1: {val_f1:.4f})")
+                metric_name = "F1" if early_stop_metric == "f1" else "Loss"
+                print(f"Early stopping at epoch {epoch+1} ({metric_name}: {val_score:.4f})")
                 break
 
     # Restore best model
@@ -148,6 +159,3 @@ def train_model(
         model.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
 
     return model
-
-
-
