@@ -109,7 +109,7 @@ def train_model(
             scaler.update()
 
         # ---------------------
-        # Validation (F1 only)
+        # Validation
         # ---------------------
         model.eval()
         all_probs, all_targets = [], []
@@ -148,5 +148,6 @@ def train_model(
         model.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
 
     return model
+
 
 
