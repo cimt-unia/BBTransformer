@@ -1,4 +1,4 @@
-# bbtransformer\trainer\tune.py
+# bbtransformer/trainer/tune.py
 
 # Import Essentials
 import json
@@ -18,6 +18,10 @@ from .eval import evaluate_model
 # ======================
 
 def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config=None):
+    """
+    Objective function for Optuna with support for new BBTransformer features.
+    Includes FlashAttention and proper dropout configuration.
+    """
     if search_config is None:
         search_config = {}
 
@@ -25,44 +29,88 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     def get(key, default):
         return search_config.get(key, default)
 
-    # --- Hyperparameter suggestions (YFT-style composite scoring) ---
+    # --- Hyperparameter suggestions (enhanced for 2026 SOTA) ---
+    embed_dim = trial.suggest_categorical('embed_dim', get('embed_dim', [256, 384, 512]))
+    num_heads = trial.suggest_categorical('num_heads', get('num_heads', [8, 16]))
+    
+    # Ensure embed_dim is divisible by num_heads
+    while embed_dim % num_heads != 0:
+        num_heads = num_heads // 2
+        if num_heads < 4:
+            num_heads = 8
+            embed_dim = 512
+            break
+    
+    # Calculate valid n_kv_heads options
+    valid_kv_heads = [h for h in [2, 4, 8] if num_heads % h == 0 and h <= num_heads]
+    if not valid_kv_heads:
+        valid_kv_heads = [num_heads // 4 if num_heads >= 4 else 1]
+    
     config = {
         'feature_dim': feature_dim,
         'num_classes': 1,
-        'embed_dim': trial.suggest_categorical('embed_dim', get('embed_dim', [256, 384, 512])),
-        'num_heads': trial.suggest_categorical('num_heads', get('num_heads', [8])),
-        'num_layers': trial.suggest_int('num_layers', 5, 7),
-        'dropout_input': trial.suggest_float('dropout_input', 0.1, 0.2),
-        'dropout_patch': trial.suggest_float('dropout_patch', 0.1, 0.2),
-        'dropout_attn': trial.suggest_float('dropout_attn', 0.1, 0.2),
-        'dropout_ffn': trial.suggest_float('dropout_ffn', 0.1, 0.25),
-        'dropout_classifier': trial.suggest_float('dropout_classifier', 0.02, 0.08),
-        'dropout_temporal': trial.suggest_float('dropout_temporal', 0.1, 0.2),
-        'embed_dim_age': trial.suggest_categorical('embed_dim_age', [16, 32]),
-        'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', [16, 32]),
-        'patch_size': 3,
-        'patch_embed_ratio': trial.suggest_categorical('patch_embed_ratio', [0.5, 0.75]),
-        'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', [64, 128]),
-        'n_kv_heads': trial.suggest_categorical('n_kv_heads', [4, 8]),
+        'embed_dim': embed_dim,
+        'num_heads': num_heads,
+        'num_layers': trial.suggest_int('num_layers', *get('num_layers_range', (5, 7))),
+        
+        # Decoupled dropout rates (key improvement in new implementation)
+        'dropout_input': trial.suggest_float('dropout_input', 0.1, 0.25),
+        'dropout_patch': trial.suggest_float('dropout_patch', 0.1, 0.25),
+        'dropout_attn': trial.suggest_float('dropout_attn', 0.08, 0.2),
+        'dropout_ffn': trial.suggest_float('dropout_ffn', 0.1, 0.3),
+        'dropout_classifier': trial.suggest_float('dropout_classifier', 0.02, 0.1),
+        'dropout_temporal': trial.suggest_float('dropout_temporal', 0.1, 0.25),
+        
+        # Embedding dimensions
+        'embed_dim_age': trial.suggest_categorical('embed_dim_age', get('embed_dim_age', [16, 32, 64])),
+        'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', get('embed_dim_ext', [16, 32])),
+        
+        # Patching configuration
+        'patch_size': trial.suggest_categorical('patch_size', get('patch_size', [3, 4, 5])),
+        'patch_embed_ratio': trial.suggest_categorical('patch_embed_ratio', get('patch_embed_ratio', [0.5, 0.75])),
+        
+        # Temporal attention
+        'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', get('temp_attn_hidden', [64, 128, 256])),
+        
+        # GQA configuration (must divide num_heads evenly)
+        'n_kv_heads': trial.suggest_categorical('n_kv_heads', valid_kv_heads),
+        
+        # Stochastic depth (new in updated implementation)
+        'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 0.0, 0.2),
+        
+        # FlashAttention (new feature)
+        'use_flash_attn': get('use_flash_attn', True),
+        
+        # Interpretability
         'return_attn_weights': False,
-        'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 0.05, 0.15)
     }
 
-    # LR and weight decay — centered on your best values
-    lr = trial.suggest_float('lr', *get('lr_range', (5e-6, 5e-5)), log=True)
-    weight_decay = trial.suggest_float('weight_decay', 1e-9, 1e-5, log=True)
+    # Optimizer hyperparameters
+    lr = trial.suggest_float('lr', *get('lr_range', (1e-5, 1e-4)), log=True)
+    weight_decay = trial.suggest_float('weight_decay', *get('weight_decay_range', (1e-6, 1e-4)), log=True)
 
     # --- Reproducibility ---
-    seed = 42 + trial.number
+    seed = get('base_seed', 42) + trial.number
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
-    # --- Model ---
-    model = create_bbtransformer(config)
+    # --- Model Creation ---
+    try:
+        model = create_bbtransformer(config)
+        
+        # Log model size
+        n_params = model.count_parameters()
+        trial.set_user_attr("n_parameters", n_params)
+        
+    except Exception as e:
+        print(f"❌ Trial {trial.number} failed during model creation: {str(e)}")
+        raise optuna.TrialPruned()
 
-    # Updated training call 
+    # --- Training ---
     try:
         trained_model = train_model(
             model=model,
@@ -72,16 +120,21 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
             lr=lr,
             weight_decay=weight_decay,
             patience=get('patience', 90),
-            use_focal_loss=False,
-            early_stop_metric="f1"
+            use_focal_loss=get('use_focal_loss', False),
+            early_stop_metric=get('early_stop_metric', "f1")
         )
     except Exception as e:
-        print(f"Trial {trial.number} failed: {str(e)}")
+        print(f"❌ Trial {trial.number} failed during training: {str(e)}")
         raise optuna.TrialPruned()
 
-    # --- Full evaluation using evaluate_model (per bbt_transformer.txt) ---
-    metrics, _, _ = evaluate_model(trained_model, val_loader)
+    # --- Evaluation ---
+    try:
+        metrics, _, _ = evaluate_model(trained_model, val_loader)
+    except Exception as e:
+        print(f"❌ Trial {trial.number} failed during evaluation: {str(e)}")
+        raise optuna.TrialPruned()
     
+    # Convert metrics to float safely
     def to_float(x):
         if isinstance(x, (np.ndarray, np.generic)):
             return float(x.item() if x.ndim == 0 else x[0])
@@ -96,121 +149,270 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     precision = to_float(metrics.get('precision', 0.0))
     recall = to_float(metrics.get('recall', 0.0))
     
+    # Clinical deployment thresholds (YFT-style)
+    THRESHOLD = get('metric_threshold', 0.60)
     metric_vals = [f1, roc_auc, accuracy, precision, recall]
-    THRESHOLD = 0.60
     valid = all(m >= THRESHOLD for m in metric_vals)
     
+    # Composite score (weighted by clinical importance)
+    weights = get('metric_weights', {
+        'f1': 0.35,
+        'roc_auc': 0.25,
+        'accuracy': 0.15,
+        'precision': 0.15,
+        'recall': 0.10
+    })
+    
     composite = (
-        0.35 * f1 +
-        0.25 * roc_auc +
-        0.15 * accuracy +
-        0.15 * precision +
-        0.10 * recall
+        weights['f1'] * f1 +
+        weights['roc_auc'] * roc_auc +
+        weights['accuracy'] * accuracy +
+        weights['precision'] * precision +
+        weights['recall'] * recall
     )
     
-    # Save metadata (YFT-style)
-    clean_metrics = {'f1': f1, 'roc_auc': roc_auc, 'accuracy': accuracy, 'precision': precision, 'recall': recall}
+    # Save metadata
+    clean_metrics = {
+        'f1': f1, 
+        'roc_auc': roc_auc, 
+        'accuracy': accuracy, 
+        'precision': precision, 
+        'recall': recall
+    }
     trial.set_user_attr("metrics", clean_metrics)
     trial.set_user_attr("composite", composite)
+    trial.set_user_attr("valid", valid)
     
-    # YFT-style return logic
+    # Return value for optimization
     if valid:
+        # Minimize negative composite (maximize composite)
         return -composite
     else:
+        # Return penalty based on worst metric
         return 1.0 - min(metric_vals)
 
 
-def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, search_config=None, target_name="disorder"):
+def tune_hyperparameters(
+    train_loader, 
+    val_loader, 
+    feature_dim, 
+    n_trials=50, 
+    search_config=None, 
+    target_name="disorder",
+    study_name=None,
+    storage=None,
+    load_if_exists=False
+):
     """
     Perform hyperparameter tuning with YFT-style composite scoring.
-    Designed for clinical deployment readiness.
+    Enhanced for 2026 SOTA BBTransformer with FlashAttention and improved regularization.
+    
+    Args:
+        train_loader: Training data loader
+        val_loader: Validation data loader
+        feature_dim: Input feature dimension
+        n_trials: Number of trials to run
+        search_config: Configuration for search space and training
+        target_name: Name of target disorder for logging
+        study_name: Optional study name for Optuna
+        storage: Optional Optuna storage backend
+        load_if_exists: Whether to load existing study
+        
+    Returns:
+        best_params: Best hyperparameters found
+        study: Optuna study object
     """
+    if search_config is None:
+        search_config = {}
+    
+    # Create study name if not provided
+    if study_name is None:
+        study_name = f"bbtransformer_v2_{target_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    # Configure pruner for efficient search
     pruner = optuna.pruners.MedianPruner(
-        n_startup_trials=10,
-        n_warmup_steps=0
+        n_startup_trials=search_config.get('n_startup_trials', 10),
+        n_warmup_steps=search_config.get('n_warmup_steps', 0),
+        interval_steps=search_config.get('interval_steps', 1)
     )
 
+    # Create study
     study = optuna.create_study(
         direction='minimize',
         pruner=pruner,
-        study_name=f"bbtransformer_tuning_{target_name}"
+        study_name=study_name,
+        storage=storage,
+        load_if_exists=load_if_exists
     )
 
+    # Define objective with bound parameters
     def objective(trial):
         return optuna_objective(trial, train_loader, val_loader, feature_dim, search_config)
 
+    # Run optimization
+    print(f"\n{'='*80}")
+    print(f"🚀 STARTING HYPERPARAMETER TUNING: {target_name}")
+    print(f"{'='*80}")
+    print(f"Study: {study_name}")
+    print(f"Trials: {n_trials}")
+    print(f"Metric Threshold: {search_config.get('metric_threshold', 0.60)}")
+    print(f"{'='*80}\n")
+    
     study.optimize(
         objective,
         n_trials=n_trials,
         show_progress_bar=True,
-        gc_after_trial=True
+        gc_after_trial=True,
+        catch=(Exception,)  # Continue on errors
     )
 
-    # Analyze results (YFT-style)
-    THRESHOLD = 0.60
+    # Analyze results
+    THRESHOLD = search_config.get('metric_threshold', 0.60)
+    
+    # Filter valid trials
     valid_trials = [
         t for t in study.trials 
         if t.state == optuna.trial.TrialState.COMPLETE and
-        all(t.user_attrs.get("metrics", {}).get(m, 0) >= THRESHOLD 
-            for m in ['f1', 'roc_auc', 'accuracy', 'precision', 'recall'])
+        t.user_attrs.get("valid", False)
     ]
     
+    # Get best trial
     if valid_trials:
         best = min(valid_trials, key=lambda t: t.value)
-        status = "✅ VALID"
+        status = "✅ CLINICALLY VALID"
     else:
         completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
         if not completed:
             print("❌ No trials completed successfully!\n")
-            return None
+            return None, study
         best = min(completed, key=lambda t: t.value if t.value < 1.0 else float('inf'))
-        status = "⚠️  BEST EFFORT"
+        status = "⚠️  BEST EFFORT (threshold not met)"
     
     best_params = best.params.copy()
     best_metrics = best.user_attrs.get("metrics", {})
     composite = best.user_attrs.get("composite", 0.0)
+    n_params = best.user_attrs.get("n_parameters", "N/A")
     
-    # Save results (YFT-style)
+    # Save results
     os.makedirs('weights', exist_ok=True)
     results_path = f'weights/best_params_{target_name}.json'
     
     results = {
+        'study_name': study_name,
         'best_params': best_params,
         'metrics': best_metrics,
-        'composite_score': composite,
-        'search_method': 'YFT-style composite scoring for clinical deployment (2026 SOTA)',
+        'composite_score': float(composite),
+        'n_parameters': int(n_params) if n_params != "N/A" else n_params,
+        'model_version': 'BBTransformer v2.0 (2026 SOTA)',
+        'features': [
+            'FlashAttention-2 support',
+            'Proper DropPath regularization',
+            'Decoupled dropout streams',
+            'Improved weight initialization',
+            'GQA with RoPE',
+            'Multi-scale fusion'
+        ],
+        'search_method': 'YFT-style composite scoring for clinical deployment',
         'threshold_met': bool(valid_trials),
         'total_trials': len(study.trials),
+        'completed_trials': len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]),
         'valid_trials': len(valid_trials),
+        'pruned_trials': len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]),
+        'failed_trials': len([t for t in study.trials if t.state == optuna.trial.TrialState.FAIL]),
         'timestamp': datetime.now().isoformat(),
     }
     
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2, default=str)
     
-    # Print summary (YFT-style)
+    # Print summary
     print(f"\n{'='*80}")
-    print(f"{status} TUNING COMPLETE: {target_name}")
+    print(f"{status}")
     print(f"{'='*80}")
-    print(f"📊 Trials: {len(study.trials)} total | {len(valid_trials)} valid")
-    print(f"🎯 Composite Score: {composite:.4f}")
+    print(f"📊 Trial Statistics:")
+    print(f"   Total:     {results['total_trials']}")
+    print(f"   Completed: {results['completed_trials']}")
+    print(f"   Valid:     {results['valid_trials']} (≥{THRESHOLD:.2f} all metrics)")
+    print(f"   Pruned:    {results['pruned_trials']}")
+    print(f"   Failed:    {results['failed_trials']}")
     
-    print(f"\n📈 Metrics:")
+    print(f"\n🎯 Best Trial Results:")
+    print(f"   Composite Score: {composite:.4f}")
+    print(f"   Parameters:      {n_params:,}" if n_params != "N/A" else f"   Parameters:      {n_params}")
+    
+    print(f"\n📈 Performance Metrics:")
     for metric in ['f1', 'roc_auc', 'accuracy', 'precision', 'recall']:
         val = best_metrics.get(metric, 0)
         check = '✅' if val >= THRESHOLD else '❌'
-        print(f"   {metric:12s}: {val:.4f} {check}")
+        print(f"   {metric.upper():12s}: {val:.4f} {check}")
     
     print(f"\n🏆 Best Hyperparameters:")
-    for k, v in best_params.items():
-        if k == 'lr':
-            print(f"   {k:24s}: {v:.6f}")
-        elif k == 'weight_decay':
-            print(f"   {k:24s}: {v:.2e}")
-        else:
-            print(f"   {k:24s}: {v:.4f}")
     
-    print(f"\n💾 Saved to: {results_path}")
+    # Architecture
+    print(f"\n   Architecture:")
+    for k in ['embed_dim', 'num_heads', 'num_layers', 'n_kv_heads']:
+        if k in best_params:
+            print(f"      {k:24s}: {best_params[k]}")
+    
+    # Dropout
+    print(f"\n   Dropout Configuration:")
+    for k in sorted([k for k in best_params.keys() if 'dropout' in k]):
+        print(f"      {k:24s}: {best_params[k]:.4f}")
+    
+    # Regularization
+    print(f"\n   Regularization:")
+    if 'stochastic_depth_rate' in best_params:
+        print(f"      {'stochastic_depth_rate':24s}: {best_params['stochastic_depth_rate']:.4f}")
+    if 'weight_decay' in best_params:
+        print(f"      {'weight_decay':24s}: {best_params['weight_decay']:.2e}")
+    
+    # Optimizer
+    print(f"\n   Optimizer:")
+    if 'lr' in best_params:
+        print(f"      {'lr':24s}: {best_params['lr']:.6f}")
+    
+    # Other params
+    other_params = [k for k in best_params.keys() 
+                   if k not in ['embed_dim', 'num_heads', 'num_layers', 'n_kv_heads', 
+                               'lr', 'weight_decay', 'stochastic_depth_rate'] 
+                   and 'dropout' not in k]
+    if other_params:
+        print(f"\n   Other:")
+        for k in sorted(other_params):
+            v = best_params[k]
+            if isinstance(v, float):
+                print(f"      {k:24s}: {v:.4f}")
+            else:
+                print(f"      {k:24s}: {v}")
+    
+    print(f"\n💾 Results saved to: {results_path}")
     print(f"{'='*80}\n")
     
     return best_params, study
+
+
+def load_best_params(target_name="disorder", weights_dir='weights'):
+    """
+    Load best hyperparameters from a previous tuning run.
+    
+    Args:
+        target_name: Name of target disorder
+        weights_dir: Directory containing saved parameters
+        
+    Returns:
+        dict: Best hyperparameters, or None if not found
+    """
+    results_path = os.path.join(weights_dir, f'best_params_{target_name}.json')
+    
+    if not os.path.exists(results_path):
+        print(f"⚠️  No saved parameters found at {results_path}")
+        return None
+    
+    with open(results_path, 'r') as f:
+        results = json.load(f)
+    
+    print(f"✅ Loaded parameters from {results_path}")
+    print(f"   Timestamp: {results.get('timestamp', 'N/A')}")
+    print(f"   Composite Score: {results.get('composite_score', 'N/A'):.4f}")
+    
+    return results['best_params']
