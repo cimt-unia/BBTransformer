@@ -5,49 +5,51 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, Any, List
 
+# Optional FlashAttention-2 support
+try:
+    from flash_attn import flash_attn_func
+    FLASH_AVAILABLE = True
+except ImportError:
+    FLASH_AVAILABLE = False
+
 
 # ======================
 # TRANSFORMER COMPONENTS
 # ======================
 
 class RMSNorm(nn.Module):
-    """Numerically stable RMSNorm with FP32 intermediate computation."""
+    """RMSNorm implementation - no need for FP32 casting"""
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        dtype = x.dtype
-        x_f32 = x.float()
-        variance = x_f32.pow(2).mean(-1, keepdim=True)
-        x_norm = x_f32 * torch.rsqrt(variance + self.eps)
-        return (self.weight * x_norm).to(dtype)
+        norm = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        return x * norm * self.weight
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, dropout_ffn: float = 0.0):
+    """SwiGLU activation function"""
+    def __init__(self, d_model: int, d_ff: int):
         super().__init__()
         self.w1 = nn.Linear(d_model, d_ff, bias=False)
         self.w2 = nn.Linear(d_ff, d_model, bias=False)
         self.w3 = nn.Linear(d_model, d_ff, bias=False)
-        self.dropout = nn.Dropout(dropout_ffn) if dropout_ffn > 0 else nn.Identity()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.w2(F.silu(self.w1(x)) * self.w3(x))
-        return self.dropout(x)
-
-
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim, base=10000.0):
+    """Rotary Position Embeddings with caching"""
+    def __init__(self, dim: int, base: float = 10000.0):
         super().__init__()
         self.dim = dim
         self.base = base
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
-        self._cache = {}  # Cache for RoPE embeddings
+        self._cache = {}
 
     def get_cos_sin(self, seq_len: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get or compute rotary embeddings with caching"""
@@ -59,16 +61,18 @@ class RotaryEmbedding(nn.Module):
             self._cache[cache_key] = (emb.cos(), emb.sin())
         return self._cache[cache_key]
 
-    def forward(self, seq_len, device):
+    def forward(self, seq_len: int, device: torch.device):
         return self.get_cos_sin(seq_len, device)
 
 
-def rotate_half(x):
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Rotate half the hidden dims of the input"""
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q, k, cos, sin):
+def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+    """Apply rotary position embeddings to q and k"""
     cos = cos.unsqueeze(0).unsqueeze(0)
     sin = sin.unsqueeze(0).unsqueeze(0)
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -76,12 +80,33 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     return q_embed, k_embed
 
 
+class DropPath(nn.Module):
+    """Stochastic Depth / Drop Path with proper scaling"""
+    def __init__(self, drop_prob: float = 0.0, scale_by_keep: bool = True):
+        super().__init__()
+        self.drop_prob = drop_prob
+        self.scale_by_keep = scale_by_keep
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()  # binarize
+        if self.scale_by_keep:
+            output = x.div(keep_prob) * random_tensor
+        else:
+            output = x * random_tensor
+        return output
+
+
 # ======================
 # PATCH EMBEDDING
 # ======================
 class PatchEmbedding(nn.Module):
-    def __init__(self, patch_size, in_dim, embed_dim, dropout=0.1):
-        """Patch embedding with parameterized dropout and activation"""
+    """Patch embedding for time series data"""
+    def __init__(self, patch_size: int, in_dim: int, embed_dim: int, dropout: float = 0.1):
         super().__init__()
         self.patch_size = patch_size
         self.proj = nn.Linear(patch_size * in_dim, embed_dim, bias=False)
@@ -89,16 +114,16 @@ class PatchEmbedding(nn.Module):
         self.act = nn.SiLU()
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
         
         # Handle sequences not divisible by patch_size
         if T % self.patch_size != 0:
             trim = T % self.patch_size
             x = x[:, :-trim]
-            T = x.shape[1]  # Update T after trimming
+            T = x.shape[1]
         
-        # Reshape into patches and project (using reshape instead of view for safety)
+        # Reshape into patches and project
         x = x.reshape(B, T // self.patch_size, self.patch_size * D)
         x = self.proj(x)
         x = self.norm(x)
@@ -108,13 +133,23 @@ class PatchEmbedding(nn.Module):
 
 
 class GQAWithRoPE(nn.Module):
-    def __init__(self, d_model, n_heads, n_kv_heads=None, dropout=0.1, return_attn_weights=False):
-        """Grouped-Query Attention with Rotary Positional Embeddings and optional attention weights"""
+    """Grouped-Query Attention with RoPE and optional FlashAttention-2"""
+    def __init__(
+        self, 
+        d_model: int, 
+        n_heads: int, 
+        n_kv_heads: Optional[int] = None, 
+        dropout: float = 0.1, 
+        return_attn_weights: bool = False,
+        use_flash: bool = True
+    ):
         super().__init__()
         assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or max(1, n_heads // 4)
         self.return_attn_weights = return_attn_weights
+        self.use_flash = use_flash and FLASH_AVAILABLE and not return_attn_weights
         
         # Ensure n_kv_heads is valid
         if self.n_kv_heads > n_heads:
@@ -130,10 +165,10 @@ class GQAWithRoPE(nn.Module):
         self.v_proj = nn.Linear(d_model, self.n_kv_heads * self.head_dim, bias=False)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
         
-        # Rotary embeddings with caching
+        # Rotary embeddings
         self.rope = RotaryEmbedding(self.head_dim)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, L, D = x.shape
         
         # Project and reshape
@@ -141,7 +176,7 @@ class GQAWithRoPE(nn.Module):
         k = self.k_proj(x).view(B, L, self.n_kv_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(B, L, self.n_kv_heads, self.head_dim).transpose(1, 2)
 
-        # Apply RoPE with caching
+        # Apply RoPE
         cos, sin = self.rope(L, x.device)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
@@ -150,28 +185,42 @@ class GQAWithRoPE(nn.Module):
             k = k.repeat_interleave(self.n_heads // self.n_kv_heads, dim=1)
             v = v.repeat_interleave(self.n_heads // self.n_kv_heads, dim=1)
 
-        # Compute attention with optional weights
-        if self.return_attn_weights and hasattr(F, 'scaled_dot_product_attention'):
-            # PyTorch 2.0+ with attention weights
-            attn_output, attn_weights = F.scaled_dot_product_attention(
+        # Compute attention
+        if self.use_flash:
+            # FlashAttention-2: expects (B, L, n_heads, head_dim)
+            q = q.transpose(1, 2)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+            attn_output = flash_attn_func(
                 q, k, v,
                 dropout_p=self.dropout if self.training else 0.0,
-                is_causal=False,
-                return_attn_weights=True
+                causal=False
             )
-            self.last_attn_weights = attn_weights.detach()
-        else:
-            attn_output = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p=self.dropout if self.training else 0.0,
-                is_causal=False
-            )
+            attn_output = attn_output.reshape(B, L, D)
             self.last_attn_weights = None
+        else:
+            # Standard attention or with weights
+            if self.return_attn_weights:
+                # Manual attention for weight extraction
+                scale = self.head_dim ** -0.5
+                attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
+                attn_weights = F.softmax(attn_weights, dim=-1)
+                if self.training and self.dropout > 0:
+                    attn_weights = F.dropout(attn_weights, p=self.dropout)
+                attn_output = torch.matmul(attn_weights, v)
+                self.last_attn_weights = attn_weights.detach()
+            else:
+                # PyTorch scaled_dot_product_attention
+                attn_output = F.scaled_dot_product_attention(
+                    q, k, v,
+                    dropout_p=self.dropout if self.training else 0.0,
+                    is_causal=False
+                )
+                self.last_attn_weights = None
+            
+            attn_output = attn_output.transpose(1, 2).contiguous().view(B, L, D)
 
-        # Reshape and project output
-        attn_output = attn_output.transpose(1, 2).contiguous().view(B, L, D)
         return self.out_proj(attn_output)
-
 
 
 # ======================
@@ -180,25 +229,26 @@ class GQAWithRoPE(nn.Module):
 class BBTransformer(nn.Module):
     def __init__(
         self,
-        feature_dim,
-        num_classes=1,
-        embed_dim=256,
-        num_heads=8,
-        num_layers=6,
-        dropout_input=0.15,
-        dropout_patch=0.15,
-        dropout_attn=0.13,
-        dropout_ffn=0.16,
-        dropout_classifier=0.05,
-        dropout_temporal=0.15,
-        embed_dim_age=32,
-        embed_dim_ext=16,
-        patch_size=3,
-        patch_embed_ratio=0.5,
-        temp_attn_hidden=64,
-        n_kv_heads=4,
-        return_attn_weights=False,
-        stochastic_depth_rate=0.09,
+        feature_dim: int,
+        num_classes: int = 1,
+        embed_dim: int = 256,
+        num_heads: int = 8,
+        num_layers: int = 6,
+        dropout_input: float = 0.15,
+        dropout_patch: float = 0.15,
+        dropout_attn: float = 0.13,
+        dropout_ffn: float = 0.16,
+        dropout_classifier: float = 0.05,
+        dropout_temporal: float = 0.15,
+        embed_dim_age: int = 32,
+        embed_dim_ext: int = 16,
+        patch_size: int = 3,
+        patch_embed_ratio: float = 0.5,
+        temp_attn_hidden: int = 64,
+        n_kv_heads: Optional[int] = 4,
+        return_attn_weights: bool = False,
+        stochastic_depth_rate: float = 0.09,
+        use_flash_attn: bool = True,
     ):
         super().__init__()
         self.feature_dim = feature_dim
@@ -209,14 +259,15 @@ class BBTransformer(nn.Module):
         self.num_layers = num_layers
         self.stochastic_depth_rate = stochastic_depth_rate
 
+        # Input normalization and projection
         self.input_norm = RMSNorm(feature_dim)
-
         self.input_proj = nn.Sequential(
             nn.Linear(feature_dim, embed_dim, bias=False),
             RMSNorm(embed_dim),
             nn.Dropout(dropout_input)
         )
 
+        # Patch embedding (short-scale)
         self.patch_embed = PatchEmbedding(
             patch_size=patch_size,
             in_dim=embed_dim,
@@ -224,6 +275,7 @@ class BBTransformer(nn.Module):
             dropout=dropout_patch
         )
 
+        # Temporal attention for global pooling
         self.temporal_attn = nn.Sequential(
             nn.Linear(embed_dim, temp_attn_hidden, bias=True),
             nn.Tanh(),
@@ -233,11 +285,15 @@ class BBTransformer(nn.Module):
         
         self.last_attention_maps = {}
 
+        # GQA configuration
         if n_kv_heads is None:
             n_kv_heads = num_heads // 4 if num_heads >= 8 else max(1, num_heads // 2)
         self.n_kv_heads = n_kv_heads
 
+        # Transformer layers with stochastic depth
         self.layers = nn.ModuleList()
+        dpr = [stochastic_depth_rate * i / max(1, num_layers - 1) for i in range(num_layers)]
+        
         for i in range(num_layers):
             layer = nn.ModuleDict({
                 'norm1': RMSNorm(embed_dim),
@@ -246,23 +302,30 @@ class BBTransformer(nn.Module):
                     n_heads=num_heads,
                     n_kv_heads=n_kv_heads,
                     dropout=dropout_attn,
-                    return_attn_weights=return_attn_weights
+                    return_attn_weights=return_attn_weights,
+                    use_flash=use_flash_attn
                 ),
+                'drop_path1': DropPath(dpr[i]),
                 'norm_post_attn': RMSNorm(embed_dim),
                 'norm2': RMSNorm(embed_dim),
-                'ffn': SwiGLU(embed_dim, embed_dim * 4, dropout_ffn=dropout_ffn),
+                'ffn': SwiGLU(embed_dim, embed_dim * 4),
+                'dropout_ffn': nn.Dropout(dropout_ffn),
+                'drop_path2': DropPath(dpr[i]),
                 'norm_post_ffn': RMSNorm(embed_dim),
             })
             self.layers.append(layer)
 
+        # Cross-attention for multi-scale fusion
         self.cross_attn = nn.MultiheadAttention(
             embed_dim, num_heads, dropout=dropout_attn, batch_first=True
         )
         self.cross_norm = RMSNorm(embed_dim)
 
+        # Confounder embeddings
         self.age_proj = nn.Linear(1, embed_dim_age)
         self.ext_embed = nn.Embedding(2, embed_dim_ext)
 
+        # Final classifier
         total_input = embed_dim + self.patch_embed_dim + embed_dim_age + embed_dim_ext
         self.classifier = nn.Sequential(
             nn.Linear(total_input, embed_dim, bias=False),
@@ -279,67 +342,73 @@ class BBTransformer(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
+        """Improved weight initialization"""
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
-                nn.init.normal_(module.weight, mean=0.0, std=0.01)
-                if any(kw in name for kw in ['out_proj', 'w2', 'classifier']):
-                    nn.init.normal_(module.weight, mean=0.0, std=0.001)
+                # Use Xavier/Glorot initialization for most layers
+                if any(kw in name for kw in ['out_proj', 'w2']):
+                    # Smaller init for residual projections
+                    nn.init.xavier_uniform_(module.weight, gain=0.02)
+                elif 'classifier' in name:
+                    # Even smaller for classifier
+                    nn.init.xavier_uniform_(module.weight, gain=0.01)
+                else:
+                    # Standard Xavier for other layers
+                    nn.init.xavier_uniform_(module.weight, gain=1.0)
+                
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+                    
             elif isinstance(module, nn.Embedding):
                 nn.init.normal_(module.weight, std=0.02)
 
-    def forward(self, x, age, ext):
+    def forward(self, x: torch.Tensor, age: torch.Tensor, ext: torch.Tensor) -> torch.Tensor:
         B, T, D = x.shape
         assert D == self.feature_dim, f"Expected feature_dim={self.feature_dim}, got {D}"
 
+        # Input processing
         x = self.input_norm(x)
         x = self.input_proj(x)
+        
+        # Short-scale pathway
         x_short = self.patch_embed(x)
         global_short = x_short.mean(dim=1)
 
+        # Main transformer pathway
         if self.return_attn_weights:
             self.last_attention_maps = {'main': [], 'cross': None}
         
         for i, layer in enumerate(self.layers):
+            # Pre-norm attention with residual
             residual = x
             x = layer['norm1'](x)
             x = layer['attn'](x)
-            
-            if self.training and self.stochastic_depth_rate > 0:
-                survival_prob = 1.0 - self.stochastic_depth_rate * (i / max(1, self.num_layers - 1))
-                if torch.rand(1, device=x.device).item() <= survival_prob:
-                    x = residual + x
-                else:
-                    x = residual
-            else:
-                x = residual + x
+            x = layer['drop_path1'](x)  # Stochastic depth
+            x = residual + x
             x = layer['norm_post_attn'](x)
 
+            # Pre-norm FFN with residual
             residual = x
             x = layer['norm2'](x)
             x = layer['ffn'](x)
-            
-            if self.training and self.stochastic_depth_rate > 0:
-                survival_prob = 1.0 - self.stochastic_depth_rate * (i / max(1, self.num_layers - 1))
-                if torch.rand(1, device=x.device).item() <= survival_prob:
-                    x = residual + x
-                else:
-                    x = residual
-            else:
-                x = residual + x
+            x = layer['dropout_ffn'](x)  # FFN dropout
+            x = layer['drop_path2'](x)  # Stochastic depth
+            x = residual + x
             x = layer['norm_post_ffn'](x)
             
+            # Collect attention weights if requested
             if self.return_attn_weights and hasattr(layer['attn'], 'last_attn_weights'):
                 if layer['attn'].last_attn_weights is not None:
                     self.last_attention_maps['main'].append(
-                        layer['attn'].last_attn_weights.cpu().detach()
+                        layer['attn'].last_attn_weights.cpu()
                     )
 
+        # Multi-scale fusion via cross-attention
         x_short_up = F.interpolate(
             x_short.transpose(1, 2), size=T, mode='linear', align_corners=False
         ).transpose(1, 2)
 
+        # Pad short-scale to match embed_dim
         pad_dim = self.embed_dim - x_short_up.size(-1)
         if pad_dim > 0:
             padding = torch.zeros(B, T, pad_dim, device=x.device, dtype=x.dtype)
@@ -347,28 +416,38 @@ class BBTransformer(nn.Module):
         else:
             x_short_padded = x_short_up[:, :, :self.embed_dim]
 
+        # Cross-attention
         if self.return_attn_weights:
-            cross_attended, cross_attn_weights = self.cross_attn(x, x_short_padded, x_short_padded)
-            self.last_attention_maps['cross'] = cross_attn_weights.cpu().detach()
+            cross_attended, cross_attn_weights = self.cross_attn(
+                x, x_short_padded, x_short_padded, need_weights=True
+            )
+            self.last_attention_maps['cross'] = cross_attn_weights.cpu()
         else:
             cross_attended, _ = self.cross_attn(x, x_short_padded, x_short_padded)
         
         x = self.cross_norm(x + cross_attended)
+
+        # Temporal pooling with learned attention
         attn_weights = F.softmax(self.temporal_attn(x), dim=1)
         global_main = torch.sum(x * attn_weights, dim=1)
 
+        # Confounder embeddings
         age_emb = self.age_proj(age.unsqueeze(1))
         ext_emb = self.ext_embed(ext)
+
+        # Final classification
         combined = torch.cat([global_main, global_short, age_emb, ext_emb], dim=1)
         logits = self.classifier(combined).squeeze(-1)
+        
         return logits
 
     def get_attention_maps(self) -> Optional[Dict[str, Any]]:
+        """Return stored attention maps if available"""
         return self.last_attention_maps if self.return_attn_weights else None
 
-    def count_parameters(self):
+    def count_parameters(self) -> int:
+        """Count trainable parameters"""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
 
 
 # ======================
@@ -383,7 +462,7 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         'embed_dim': 256,
         'num_heads': 8,
         'num_layers': 6,
-        # Dropout configuration (decoupled streams)
+        # Dropout configuration
         'dropout_input': 0.15,
         'dropout_patch': 0.15,
         'dropout_attn': 0.13,
@@ -400,8 +479,10 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         'temp_attn_hidden': 64,
         # GQA configuration
         'n_kv_heads': 4,
-        # Stochastic depth
+        # Regularization
         'stochastic_depth_rate': 0.09,
+        # Performance
+        'use_flash_attn': True,
         # Debug/interpretability
         'return_attn_weights': False
     }
@@ -428,7 +509,8 @@ def create_bbtransformer(config: dict) -> BBTransformer:
         temp_attn_hidden=default_config['temp_attn_hidden'],
         n_kv_heads=default_config['n_kv_heads'],
         return_attn_weights=default_config['return_attn_weights'],
-        stochastic_depth_rate=default_config['stochastic_depth_rate']
+        stochastic_depth_rate=default_config['stochastic_depth_rate'],
+        use_flash_attn=default_config['use_flash_attn']
     )
 
 
@@ -450,11 +532,19 @@ def load_pretrained_bbtransformer(weights_path: str, config: dict) -> BBTransfor
         if k in model_state and v.shape == model_state[k].shape
     }
     
+    # Log what's being loaded
+    missing_keys = set(model_state.keys()) - set(pretrained_state.keys())
+    unexpected_keys = set(pretrained_state.keys()) - set(model_state.keys())
+    
+    if missing_keys:
+        print(f"Missing keys in checkpoint: {missing_keys}")
+    if unexpected_keys:
+        print(f"Unexpected keys in checkpoint: {unexpected_keys}")
+    
     # Update model with pretrained weights
     model_state.update(pretrained_state)
     model.load_state_dict(model_state)
     
+    print(f"Loaded {len(pretrained_state)}/{len(model_state)} weights from checkpoint")
+    
     return model
-
-
-
