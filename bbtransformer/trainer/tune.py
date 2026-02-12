@@ -25,33 +25,32 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     def get(key, default):
         return search_config.get(key, default)
 
-    # --- Hyperparameter suggestions ---
+    # --- Hyperparameter suggestions (YFT-style composite scoring) ---
     config = {
         'feature_dim': feature_dim,
         'num_classes': 1,
-        'embed_dim': trial.suggest_categorical('embed_dim', get('embed_dim', [128, 256, 512])),
-        'num_heads': trial.suggest_categorical('num_heads', get('num_heads', [4, 8, 16])),
-        'num_layers': trial.suggest_int('num_layers', 3, 8),
-        'dropout_input': trial.suggest_float('dropout_input', 0.05, 0.3),
-        'dropout_attn': trial.suggest_float('dropout_attn', 0.05, 0.3),
-        'dropout_ffn': trial.suggest_float('dropout_ffn', 0.1, 0.4),
-        'dropout_classifier': trial.suggest_float(
-            'dropout_classifier',
-            *get('dropout_classifier', (0.0, 0.3))
-        ),
-        'dropout_temporal': trial.suggest_float('dropout_temporal', 0.0, 0.2),
-        'embed_dim_age': trial.suggest_categorical('embed_dim_age', [8, 16, 32]),
-        'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', [8, 16, 32]),
-        'patch_size': 3,  # ← Keep fixed per reference implementation
-        'patch_embed_ratio': trial.suggest_float('patch_embed_ratio', 0.5, 1.0, step=0.25),
-        'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', [32, 64, 128]),
-        'n_kv_heads': trial.suggest_categorical('n_kv_heads', [None, 2, 4, 8]),
+        'embed_dim': trial.suggest_categorical('embed_dim', get('embed_dim', [256, 384, 512])),
+        'num_heads': trial.suggest_categorical('num_heads', get('num_heads', [8])),
+        'num_layers': trial.suggest_int('num_layers', 5, 7),
+        'dropout_input': trial.suggest_float('dropout_input', 0.1, 0.2),
+        'dropout_patch': trial.suggest_float('dropout_patch', 0.1, 0.2),
+        'dropout_attn': trial.suggest_float('dropout_attn', 0.1, 0.2),
+        'dropout_ffn': trial.suggest_float('dropout_ffn', 0.1, 0.25),
+        'dropout_classifier': trial.suggest_float('dropout_classifier', 0.02, 0.08),
+        'dropout_temporal': trial.suggest_float('dropout_temporal', 0.1, 0.2),
+        'embed_dim_age': trial.suggest_categorical('embed_dim_age', [16, 32]),
+        'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', [16, 32]),
+        'patch_size': 3,
+        'patch_embed_ratio': trial.suggest_categorical('patch_embed_ratio', [0.5, 0.75]),
+        'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', [64, 128]),
+        'n_kv_heads': trial.suggest_categorical('n_kv_heads', [4, 8]),
         'return_attn_weights': False,
+        'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 0.05, 0.15)
     }
 
-    # LR and weight decay 
-    lr = trial.suggest_float('lr', *get('lr_range', (1e-5, 1e-3)), log=True)
-    weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True)
+    # LR and weight decay — centered on your best values
+    lr = trial.suggest_float('lr', *get('lr_range', (5e-6, 5e-5)), log=True)
+    weight_decay = trial.suggest_float('weight_decay', 1e-9, 1e-5, log=True)
 
     # --- Reproducibility ---
     seed = 42 + trial.number
@@ -69,10 +68,10 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
             model=model,
             train_loader=train_loader,
             val_loader=val_loader,
-            epochs=get('epochs', 5000),      # ← Default to 5000
+            epochs=get('epochs', 10000),
             lr=lr,
             weight_decay=weight_decay,
-            patience=get('patience', 80),     # ← Default to 80
+            patience=get('patience', 90),
             use_focal_loss=False,
             early_stop_metric="f1"
         )
@@ -109,11 +108,12 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         0.10 * recall
     )
     
-    # Save metadata
+    # Save metadata (YFT-style)
     clean_metrics = {'f1': f1, 'roc_auc': roc_auc, 'accuracy': accuracy, 'precision': precision, 'recall': recall}
     trial.set_user_attr("metrics", clean_metrics)
     trial.set_user_attr("composite", composite)
     
+    # YFT-style return logic
     if valid:
         return -composite
     else:
@@ -122,10 +122,10 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
 
 def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, search_config=None, target_name="disorder"):
     """
-    Perform hyperparameter tuning with composite scoring and thresholding.
+    Perform hyperparameter tuning with YFT-style composite scoring.
     Designed for clinical deployment readiness.
     """
-    pruner = optuna.pruners.MedianPruner(  # ← Compatible with final-value reporting
+    pruner = optuna.pruners.MedianPruner(
         n_startup_trials=10,
         n_warmup_steps=0
     )
@@ -146,7 +146,7 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
         gc_after_trial=True
     )
 
-    # Analyze results
+    # Analyze results (YFT-style)
     THRESHOLD = 0.60
     valid_trials = [
         t for t in study.trials 
@@ -170,7 +170,7 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     best_metrics = best.user_attrs.get("metrics", {})
     composite = best.user_attrs.get("composite", 0.0)
     
-    # Save results
+    # Save results (YFT-style)
     os.makedirs('weights', exist_ok=True)
     results_path = f'weights/best_params_{target_name}.json'
     
@@ -178,7 +178,7 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
         'best_params': best_params,
         'metrics': best_metrics,
         'composite_score': composite,
-        'search_method': 'Composite scoring for clinical deployment (2026 SOTA)',
+        'search_method': 'YFT-style composite scoring for clinical deployment (2026 SOTA)',
         'threshold_met': bool(valid_trials),
         'total_trials': len(study.trials),
         'valid_trials': len(valid_trials),
@@ -188,7 +188,7 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2, default=str)
     
-    # Print summary
+    # Print summary (YFT-style)
     print(f"\n{'='*80}")
     print(f"{status} TUNING COMPLETE: {target_name}")
     print(f"{'='*80}")
@@ -214,4 +214,3 @@ def tune_hyperparameters(train_loader, val_loader, feature_dim, n_trials=50, sea
     print(f"{'='*80}\n")
     
     return best_params, study
-
