@@ -281,9 +281,9 @@ def run_analysis(
         # Pass full metadata to CSV function
         save_top_importance_to_csv(
             importance_scores,
-            roi_metadata=roi_metadata,  # ← KEY CHANGE
+            roi_metadata=roi_metadata,  
             target_name=target_column,
-            top_n=10,
+            top_n=5,
             save_path=f'results/importance_{target_column}.csv'
         )
 
@@ -291,7 +291,7 @@ def run_analysis(
             plot_importance(
                 importance_scores,
                 roi_names=roi_names,
-                top_n=10,
+                top_n=5,
                 save_path=f'results/importance_{target_column}_plot.png'
             )
 
