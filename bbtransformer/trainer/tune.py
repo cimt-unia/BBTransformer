@@ -30,68 +30,73 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         return search_config.get(key, default)
 
     # --- Hyperparameter suggestions (enhanced for 2026 SOTA) ---
-    embed_dim = trial.suggest_categorical('embed_dim', get('embed_dim', [256, 384, 512]))
-    num_heads = trial.suggest_categorical('num_heads', get('num_heads', [8, 16]))
+    embed_dim = trial.suggest_categorical('embed_dim', get('embed_dim', [512]))
+    num_heads = trial.suggest_categorical('num_heads', get('num_heads', [12]))
     
-    # Ensure embed_dim is divisible by num_heads
-    while embed_dim % num_heads != 0:
-        num_heads = num_heads // 2
-        if num_heads < 4:
-            num_heads = 8
-            embed_dim = 512
-            break
+    # CRITICAL: Validate divisibility BEFORE model creation
+    if embed_dim % num_heads != 0:
+        raise optuna.TrialPruned("Invalid: embed_dim not divisible by num_heads")
     
-    # Calculate valid n_kv_heads options
-    valid_kv_heads = [h for h in [2, 4, 8] if num_heads % h == 0 and h <= num_heads]
-    if not valid_kv_heads:
-        valid_kv_heads = [num_heads // 4 if num_heads >= 4 else 1]
+    # Respect user-provided n_kv_heads_options
+    n_kv_options = get('n_kv_heads_options', None)
+    if n_kv_options is not None:
+        valid_kv_heads = [h for h in n_kv_options if num_heads % h == 0]
+        if not valid_kv_heads:
+            raise optuna.TrialPruned(f"No valid n_kv_heads in {n_kv_options} for num_heads={num_heads}")
+    else:
+        # Fallback to default logic
+        valid_kv_heads = [h for h in [2, 4, 8] if num_heads % h == 0 and h <= num_heads]
+        if not valid_kv_heads:
+            valid_kv_heads = [max(1, num_heads // 4)]
     
+    n_kv_heads = trial.suggest_categorical('n_kv_heads', valid_kv_heads)
+
     config = {
         'feature_dim': feature_dim,
         'num_classes': 1,
         'embed_dim': embed_dim,
         'num_heads': num_heads,
-        'num_layers': trial.suggest_int('num_layers', *get('num_layers_range', (5, 7))),
+        'num_layers': trial.suggest_int('num_layers', *get('num_layers_range', (6, 6))),
         
         # Decoupled dropout rates - USE CUSTOM RANGES FROM search_config
         'dropout_input': trial.suggest_float('dropout_input', 
-            *get('dropout_input_range', (0.1, 0.25))),
+            *get('dropout_input_range', (0.16, 0.17))),
         'dropout_patch': trial.suggest_float('dropout_patch', 
-            *get('dropout_patch_range', (0.1, 0.25))),
+            *get('dropout_patch_range', (0.17, 0.18))),
         'dropout_attn': trial.suggest_float('dropout_attn', 
-            *get('dropout_attn_range', (0.08, 0.2))),
+            *get('dropout_attn_range', (0.15, 0.16))),
         'dropout_ffn': trial.suggest_float('dropout_ffn', 
-            *get('dropout_ffn_range', (0.1, 0.3))),
+            *get('dropout_ffn_range', (0.15, 0.17))),
         'dropout_classifier': trial.suggest_float('dropout_classifier', 
-            *get('dropout_classifier_range', (0.02, 0.1))),
+            *get('dropout_classifier_range', (0.09, 0.10))),
         'dropout_temporal': trial.suggest_float('dropout_temporal', 
-            *get('dropout_temporal_range', (0.1, 0.25))),
+            *get('dropout_temporal_range', (0.17, 0.18))),
         
         # Embedding dimensions
-        'embed_dim_age': trial.suggest_categorical('embed_dim_age', get('embed_dim_age', [16, 32, 64])),
-        'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', get('embed_dim_ext', [16, 32])),
+        'embed_dim_age': trial.suggest_categorical('embed_dim_age', get('embed_dim_age', [32])),
+        'embed_dim_ext': trial.suggest_categorical('embed_dim_ext', get('embed_dim_ext', [16])),
         
         # Patching configuration
-        'patch_size': trial.suggest_categorical('patch_size', get('patch_size', [3, 4, 5])),
-        'patch_embed_ratio': trial.suggest_categorical('patch_embed_ratio', get('patch_embed_ratio', [0.5, 0.75])),
+        'patch_size': trial.suggest_categorical('patch_size', get('patch_size', [3])),
+        'patch_embed_ratio': trial.suggest_categorical('patch_embed_ratio', get('patch_embed_ratio', [0.75])),
         
         # Temporal attention
-        'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', get('temp_attn_hidden', [64, 128, 256])),
+        'temp_attn_hidden': trial.suggest_categorical('temp_attn_hidden', get('temp_attn_hidden', [512])),
         
         # GQA configuration (must divide num_heads evenly)
-        'n_kv_heads': trial.suggest_categorical('n_kv_heads', valid_kv_heads),
+        'n_kv_heads': n_kv_heads,
         
         # Stochastic depth
         'stochastic_depth_rate': trial.suggest_float('stochastic_depth_rate', 
-            *get('stochastic_depth_range', (0.0, 0.2))),
+            *get('stochastic_depth_rate_range', (0.095, 0.108))),
         
         # Interpretability
         'return_attn_weights': False,
     }
 
     # Optimizer hyperparameters
-    lr = trial.suggest_float('lr', *get('lr_range', (1e-5, 1e-4)), log=True)
-    weight_decay = trial.suggest_float('weight_decay', *get('weight_decay_range', (1e-6, 1e-4)), log=True)
+    lr = trial.suggest_float('lr', *get('lr_range', (2.8e-5, 3.0e-5)), log=True)
+    weight_decay = trial.suggest_float('weight_decay', *get('weight_decay_range', (1.7e-6, 1.85e-6)), log=True)
 
     # --- Reproducibility ---
     seed = get('base_seed', 42) + trial.number
@@ -115,17 +120,17 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
         raise optuna.TrialPruned()
 
     # --- Training ---
-    print(f"[Trial {trial.number}] Starting training (max {get('epochs', 10000)} epochs)...")
+    print(f"[Trial {trial.number}] Starting training (max {get('epochs', 5000)} epochs)...")
     try:
         trained_model = train_model(
             model=model,
             train_loader=train_loader,
             val_loader=val_loader,
-            epochs=get('epochs', 10000),
+            epochs=get('epochs', 5000),
             lr=lr,
             weight_decay=weight_decay,
-            patience=get('patience', 90),
-            use_focal_loss=get('use_focal_loss', False),
+            patience=get('patience', 100),
+            use_focal_loss=get('use_focal_loss', True),  # Enable focal loss
             early_stop_metric=get('early_stop_metric', "f1")
         )
         print(f"[Trial {trial.number}] Training completed")
@@ -165,11 +170,11 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     
     # Composite score (weighted by clinical importance)
     weights = get('metric_weights', {
-        'f1': 0.35,
-        'roc_auc': 0.25,
+        'f1': 0.30,
+        'roc_auc': 0.25,  # ↑ Weight AUC for Parkinson's
         'accuracy': 0.15,
         'precision': 0.15,
-        'recall': 0.10
+        'recall': 0.15
     })
     
     composite = (
@@ -208,7 +213,7 @@ def tune_hyperparameters(
     train_loader, 
     val_loader, 
     feature_dim, 
-    n_trials=50, 
+    n_trials=12,  # Reduced from 50
     search_config=None, 
     target_name="disorder",
     study_name=None,
@@ -223,7 +228,7 @@ def tune_hyperparameters(
         train_loader: Training data loader
         val_loader: Validation data loader
         feature_dim: Input feature dimension
-        n_trials: Number of trials to run
+        n_trials: Number of trials to run (reduced to 12)
         search_config: Configuration for search space and training
         target_name: Name of target disorder for logging
         study_name: Optional study name for Optuna
@@ -243,7 +248,7 @@ def tune_hyperparameters(
     
     # Configure pruner for efficient search
     pruner = optuna.pruners.MedianPruner(
-        n_startup_trials=search_config.get('n_startup_trials', 10),
+        n_startup_trials=search_config.get('n_startup_trials', 4),
         n_warmup_steps=search_config.get('n_warmup_steps', 0),
         interval_steps=search_config.get('interval_steps', 1)
     )
@@ -267,8 +272,8 @@ def tune_hyperparameters(
     print(f"{'='*80}")
     print(f"Study: {study_name}")
     print(f"Trials: {n_trials}")
-    print(f"Epochs per trial: {search_config.get('epochs', 10000)}")
-    print(f"Patience: {search_config.get('patience', 90)}")
+    print(f"Epochs per trial: {search_config.get('epochs', 5000)}")
+    print(f"Patience: {search_config.get('patience', 100)}")
     print(f"Metric Threshold: {search_config.get('metric_threshold', 0.60)}")
     print(f"{'='*80}\n")
     
