@@ -208,23 +208,23 @@ class BBTransformer(nn.Module):
         self,
         feature_dim: int,
         num_classes: int = 1,
-        embed_dim: int = 256,
-        num_heads: int = 8,
-        num_layers: int = 6,
-        dropout_input: float = 0.15,
+        embed_dim: int = 512,
+        num_heads: int = 16,
+        num_layers: int = 7,
+        dropout_input: float = 0.17,
         dropout_patch: float = 0.15,
-        dropout_attn: float = 0.13,
-        dropout_ffn: float = 0.16,
-        dropout_classifier: float = 0.05,
-        dropout_temporal: float = 0.15,
+        dropout_attn: float = 0.15,
+        dropout_ffn: float = 0.24,
+        dropout_classifier: float = 0.04,
+        dropout_temporal: float = 0.16,
         embed_dim_age: int = 32,
         embed_dim_ext: int = 16,
         patch_size: int = 3,
-        patch_embed_ratio: float = 0.5,
-        temp_attn_hidden: int = 64,
-        n_kv_heads: Optional[int] = 4,
+        patch_embed_ratio: float = 0.75,
+        temp_attn_hidden: int = 512,
+        n_kv_heads: Optional[int] = 8,
         return_attn_weights: bool = False,
-        stochastic_depth_rate: float = 0.09,
+        stochastic_depth_rate: float = 0.10,
     ):
         super().__init__()
         self.feature_dim = feature_dim
@@ -430,37 +430,38 @@ class BBTransformer(nn.Module):
 # ======================
 def create_bbtransformer(config: dict) -> BBTransformer:
     """Factory function to create a BBTransformer with full configuration support"""
+    # Default configuration based on best clinically validated trial (Composite Score: 0.7103)
     default_config = {
         # Core architecture
         'feature_dim': 414,
         'num_classes': 1,
-        'embed_dim': 256,
-        'num_heads': 8,
-        'num_layers': 6,
+        'embed_dim': 512,
+        'num_heads': 16,
+        'num_layers': 7,
         # Dropout configuration
-        'dropout_input': 0.15,
+        'dropout_input': 0.17,
         'dropout_patch': 0.15,
-        'dropout_attn': 0.13,
-        'dropout_ffn': 0.16,
-        'dropout_classifier': 0.05,
-        'dropout_temporal': 0.15,
+        'dropout_attn': 0.15,
+        'dropout_ffn': 0.24,
+        'dropout_classifier': 0.04,
+        'dropout_temporal': 0.16,
         # Confounder embeddings
         'embed_dim_age': 32,
         'embed_dim_ext': 16,
         # Patching
         'patch_size': 3,
-        'patch_embed_ratio': 0.5,
+        'patch_embed_ratio': 0.75,
         # Temporal attention
-        'temp_attn_hidden': 64,
+        'temp_attn_hidden': 512,
         # GQA configuration
-        'n_kv_heads': 4,
+        'n_kv_heads': 8,
         # Regularization
-        'stochastic_depth_rate': 0.09,
+        'stochastic_depth_rate': 0.10,
         # Debug/interpretability
         'return_attn_weights': False
     }
     
-    # Override defaults with user config
+    # Override defaults with user-provided config (if any)
     default_config.update(config)
     
     return BBTransformer(
@@ -520,3 +521,4 @@ def load_pretrained_bbtransformer(weights_path: str, config: dict) -> BBTransfor
     print(f"Loaded {len(pretrained_state)}/{len(model_state)} weights from checkpoint")
     
     return model
+
