@@ -37,19 +37,20 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     if embed_dim % num_heads != 0:
         raise optuna.TrialPruned("Invalid: embed_dim not divisible by num_heads")
     
-    # Respect user-provided n_kv_heads_options
+    # FIXED: Respect user-provided n_kv_heads_options properly
     n_kv_options = get('n_kv_heads_options', None)
-    if n_kv_options is not None:
+    if n_kv_options is not None and len(n_kv_options) > 0:
+        # User specified n_kv_heads options - use them
         valid_kv_heads = [h for h in n_kv_options if num_heads % h == 0]
         if not valid_kv_heads:
             raise optuna.TrialPruned(f"No valid n_kv_heads in {n_kv_options} for num_heads={num_heads}")
+        n_kv_heads = trial.suggest_categorical('n_kv_heads', valid_kv_heads)
     else:
         # Fallback to default logic
         valid_kv_heads = [h for h in [2, 4, 8] if num_heads % h == 0 and h <= num_heads]
         if not valid_kv_heads:
             valid_kv_heads = [max(1, num_heads // 4)]
-    
-    n_kv_heads = trial.suggest_categorical('n_kv_heads', valid_kv_heads)
+        n_kv_heads = trial.suggest_categorical('n_kv_heads', valid_kv_heads)
 
     config = {
         'feature_dim': feature_dim,
@@ -97,6 +98,14 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     # Optimizer hyperparameters
     lr = trial.suggest_float('lr', *get('lr_range', (2.8e-5, 3.0e-5)), log=True)
     weight_decay = trial.suggest_float('weight_decay', *get('weight_decay_range', (1.7e-6, 1.85e-6)), log=True)
+
+    # DEBUG: Print what was actually selected
+    print(f"\n[Trial {trial.number}] Selected hyperparameters:")
+    print(f"  Architecture: embed_dim={embed_dim}, num_heads={num_heads}, n_kv_heads={n_kv_heads}")
+    print(f"  Dropout classifier: {config['dropout_classifier']:.4f}")
+    print(f"  Dropout FFN: {config['dropout_ffn']:.4f}")
+    print(f"  Config n_kv_heads_options: {get('n_kv_heads_options', 'NOT SET')}")
+    print(f"  Valid KV heads: {valid_kv_heads}")
 
     # --- Reproducibility ---
     seed = get('base_seed', 42) + trial.number
@@ -307,12 +316,13 @@ def tune_hyperparameters(
         best = min(completed, key=lambda t: t.value if t.value < 1.0 else float('inf'))
         status = "⚠️  BEST EFFORT (threshold not met)"
     
+    # FIXED: Get the actual config that was used, not just trial.params
     best_params = best.params.copy()
     best_metrics = best.user_attrs.get("metrics", {})
     composite = best.user_attrs.get("composite", 0.0)
     n_params = best.user_attrs.get("n_parameters", "N/A")
     
-    # Save results
+    # Save results with ACTUAL hyperparameters used
     os.makedirs('weights', exist_ok=True)
     results_path = f'weights/best_params_{target_name}.json'
     
