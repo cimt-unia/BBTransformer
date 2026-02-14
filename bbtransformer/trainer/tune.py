@@ -10,12 +10,14 @@ import numpy as np
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-
 from ..model import create_bbtransformer
 from .train import train_model  
 from .eval import evaluate_model
 from .loader import prepare_fmri_data
 
+# Global tracker for best composite score (reset per tuning run)
+_CURRENT_BEST_COMPOSITE = -float('inf')
+_CURRENT_BEST_WEIGHTS_PATH = None
 
 # ======================
 # HYPERPARAMETER TUNING 
@@ -32,6 +34,8 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     # Helper to safely get config with defaults
     def get(key, default):
         return search_config.get(key, default)
+
+    target_name = get('target_name', 'disorder')  # Get target name from config
 
     # --- Hyperparameter suggestions (enhanced for 2026 SOTA) ---
     embed_dim = trial.suggest_categorical('embed_dim', get('embed_dim', [512]))
@@ -215,6 +219,23 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     print(f"   F1: {f1:.4f}, ROC-AUC: {roc_auc:.4f}, Acc: {accuracy:.4f}")
     print(f"   Composite: {composite:.4f}, Valid: {valid}")
     
+    # NEW: Save weights if this is the new best valid trial
+    global _CURRENT_BEST_COMPOSITE, _CURRENT_BEST_WEIGHTS_PATH
+    
+    if valid and composite > _CURRENT_BEST_COMPOSITE:
+        _CURRENT_BEST_COMPOSITE = composite
+        
+        # Save weights to temporary path
+        weights_dir = 'weights'
+        os.makedirs(weights_dir, exist_ok=True)
+        temp_weight_path = os.path.join(weights_dir, f"best_model_{target_name}_temp.pth")
+        
+        # Save CPU copy of model state
+        torch.save({k: v.cpu() for k, v in trained_model.state_dict().items()}, temp_weight_path)
+        _CURRENT_BEST_WEIGHTS_PATH = temp_weight_path
+        
+        print(f"   💾 New best weights saved (composite={composite:.4f})")
+    
     # Return value for optimization
     if valid:
         return -composite  # Minimize negative composite (maximize composite)
@@ -252,6 +273,8 @@ def tune_hyperparameters(
         best_params: Best hyperparameters found
         study: Optuna study object
     """
+    global _CURRENT_BEST_COMPOSITE, _CURRENT_BEST_WEIGHTS_PATH
+    
     if search_config is None:
         search_config = {}
     
@@ -357,6 +380,19 @@ def tune_hyperparameters(
     
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2, default=str)
+    
+    # NEW: Rename temp weights to final name
+    if _CURRENT_BEST_WEIGHTS_PATH and os.path.exists(_CURRENT_BEST_WEIGHTS_PATH):
+        final_weight_path = f'weights/best_model_{target_name}.pth'
+        os.rename(_CURRENT_BEST_WEIGHTS_PATH, final_weight_path)
+        results['weight_file'] = final_weight_path
+        with open(results_path, 'w') as f:  # Update JSON with weight path
+            json.dump(results, f, indent=2, default=str)
+        print(f"   ✅ Final best weights saved to: {final_weight_path}")
+    
+    # Reset global tracker for next tuning run
+    _CURRENT_BEST_COMPOSITE = -float('inf')
+    _CURRENT_BEST_WEIGHTS_PATH = None
     
     # Print summary
     print(f"\n{'='*80}")
@@ -487,6 +523,9 @@ def run_tuning_workflow(
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(results_dir, exist_ok=True)
 
+    # ADD TARGET NAME TO CONFIG FOR WEIGHT SAVING
+    tuning_config['target_name'] = target_name
+
     def load_data_with_fallback():
         """Attempts to load data with decreasing batch sizes on OOM risk."""
         for batch_size in [base_batch, 32, 16]:
@@ -548,4 +587,3 @@ def run_tuning_workflow(
 
     finally:
         print("\n" + "=" * 80)
-
