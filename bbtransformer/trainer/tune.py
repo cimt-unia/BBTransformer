@@ -216,29 +216,29 @@ def optuna_objective(trial, train_loader, val_loader, feature_dim, search_config
     print(f"   Composite: {composite:.4f}, Valid: {valid}")
     
     # ===== MODEL SAVING LOGIC =====
-    # Save model weights if this is the best trial so far
-    study = trial.study
+    # Save model weights if this is the best valid trial so far
     if valid:
-        # Check if this is the best valid trial
-        current_best = -composite  # The value we're returning
-        
-        # Get all completed valid trials before this one
-        completed_valid = [
-            t for t in study.trials 
+        # Get all completed valid trials
+        completed_valid_trials = [
+            t for t in trial.study.trials 
             if t.state == optuna.trial.TrialState.COMPLETE 
             and t.user_attrs.get("valid", False)
-            and t.number < trial.number  # Only previous trials
         ]
         
-        # Check if this beats all previous trials
-        is_best = True
-        if completed_valid:
-            prev_best_value = min(t.value for t in completed_valid)
-            is_best = current_best < prev_best_value
+        # This trial's value (remember: we minimize -composite)
+        current_value = -composite
         
-        if is_best:
+        # Check if this is the best so far
+        is_best = True
+        if completed_valid_trials:
+            best_previous_value = min(t.value for t in completed_valid_trials)
+            is_best = current_value < best_previous_value
+        
+        # Also save if this is the first valid trial
+        if is_best or not completed_valid_trials:
             os.makedirs('weights', exist_ok=True)
-            weights_path = f'weights/best_model_{get("target_name", "disorder")}.pt'
+            target_name = get("target_name", "disorder")
+            weights_path = f'weights/best_model_{target_name}.pt'
             torch.save(trained_model.state_dict(), weights_path)
             print(f"💾 [Trial {trial.number}] New best! Saved weights to {weights_path}")
             trial.set_user_attr("weights_saved", True)
