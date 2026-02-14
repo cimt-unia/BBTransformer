@@ -1,16 +1,20 @@
 # bbtransformer/trainer/tune.py
 
 # Import Essentials
+import os
 import json
 import torch
-import numpy as np
 import optuna
-from typing import Optional, Dict, Any, List
+import traceback
+import numpy as np
 from datetime import datetime
-import os
+from typing import Optional, Dict, Any, List
+
+
 from ..model import create_bbtransformer
 from .train import train_model  
-from .eval import evaluate_model  
+from .eval import evaluate_model
+from .loader import prepare_fmri_data
 
 
 # ======================
@@ -445,3 +449,103 @@ def load_best_params(target_name="disorder", weights_dir='weights'):
     print(f"   Composite Score: {results.get('composite_score', 'N/A'):.4f}")
     
     return results['best_params']
+
+# ======================
+# TUNING WORKFLOW
+# ======================
+
+
+def run_tuning_workflow(
+    target_name: str,
+    data_path: str,
+    pheno_path: str,
+    tuning_config: dict,
+    n_trials: int = 30,
+    base_batch: int = 64,
+    random_seed: int = 42,
+    weights_dir: str = 'weights',
+    results_dir: str = 'results'
+):
+    """
+    Executes a complete hyperparameter tuning workflow for fMRI-based classification.
+
+    Parameters:
+        target_name (str): Name of the clinical target (e.g., 'ASD', 'Parkinsons').
+        data_path (str): Path to the .npz fMRI data file.
+        pheno_path (str): Path to the phenotype CSV file.
+        tuning_config (dict): Configuration dictionary for hyperparameter search space.
+        n_trials (int): Number of Optuna trials to run.
+        base_batch (int): Initial batch size; will reduce on OOM.
+        random_seed (int): Random seed for reproducibility.
+        weights_dir (str): Directory to save best hyperparameters.
+        results_dir (str): Directory for logging/results (created but not used here).
+
+    Returns:
+        tuple: (best_hyperparameters_dict or None, optuna_study or None)
+    """
+    # Ensure output directories exist
+    os.makedirs(weights_dir, exist_ok=True)
+    os.makedirs(results_dir, exist_ok=True)
+
+    def load_data_with_fallback():
+        """Attempts to load data with decreasing batch sizes on OOM risk."""
+        for batch_size in [base_batch, 32, 16]:
+            try:
+                print(f"   Attempting batch_size = {batch_size}...")
+                loaders = prepare_fmri_data(
+                    data_path=data_path,
+                    pheno_path=pheno_path,
+                    target_column=target_name,
+                    batch_size=batch_size,
+                    random_seed=random_seed
+                )
+                print(f"   ✅ Success with batch_size = {batch_size}")
+                return loaders, batch_size
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    print(f"   ❌ OOM with batch_size = {batch_size}, trying smaller...")
+                    continue
+                else:
+                    raise e
+        raise RuntimeError("All batch sizes failed due to OOM.")
+
+    try:
+        print(f" Starting hyperparameter tuning for '{target_name}'")
+        print(f"📂 Data: {data_path}")
+
+        (train_loader, val_loader, _, metadata), used_batch = load_data_with_fallback()
+        feature_dim = metadata['feature_dim']
+
+        print(f"\n✅ Data loaded:")
+        print(f"   - Train: {len(train_loader.dataset)} | Val: {len(val_loader.dataset)}")
+        print(f"   - Feature dim: {feature_dim} | Batch size: {used_batch}")
+
+        best_hp, study = tune_hyperparameters(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            feature_dim=feature_dim,
+            n_trials=n_trials,
+            search_config=tuning_config,
+            target_name=target_name
+        )
+
+        if best_hp is not None:
+            print(f"\n✅ Tuning succeeded!")
+            print(f"   Best composite score: {study.best_value:.4f}")
+            save_path = os.path.join(weights_dir, f'best_params_{target_name}.json')
+            with open(save_path, 'w') as f:
+                json.dump(best_hp, f, indent=2)
+            print(f"   Saved to: {save_path}")
+        else:
+            print(f"\n⚠️ No trial met clinical validity threshold (≥0.60).")
+
+        return best_hp, study
+
+    except Exception as e:
+        print(f"❌ Critical error during tuning: {str(e)}")
+        traceback.print_exc()
+        return None, None
+
+    finally:
+        print("\n" + "=" * 80)
+
