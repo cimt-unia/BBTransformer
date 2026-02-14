@@ -179,27 +179,29 @@ def run_analysis(
     torch.cuda.empty_cache()
     gc.collect()
     
-    # Updated defaults matching YFT best parameters and refactored architecture
+    # Updated defaults matching best parameters 
+
+# Updated defaults matching best parameters (rounded to 2 decimals)
     DEFAULT_BEST_HP = {
         'feature_dim': metadata['feature_dim'],
         'num_classes': 1,
-        'embed_dim': 256,          
-        'num_heads': 8,
-        'num_layers': 6,
-        'dropout_input': 0.15,    
-        'dropout_patch': 0.15,     
-        'dropout_attn': 0.13,      
-        'dropout_ffn': 0.15,       
-        'dropout_classifier': 0.05, 
-        'dropout_temporal': 0.15,  
+        'embed_dim': 512,
+        'num_heads': 16,
+        'num_layers': 7,
+        'dropout_input': 0.17,
+        'dropout_patch': 0.15,
+        'dropout_attn': 0.16,
+        'dropout_ffn': 0.24,
+        'dropout_classifier': 0.04,
+        'dropout_temporal': 0.16,
         'embed_dim_age': 32,
         'embed_dim_ext': 16,
-        'patch_size': 3,           
-        'patch_embed_ratio': 0.5,
-        'temp_attn_hidden': 64,   
-        'n_kv_heads': 4,
+        'patch_size': 3,
+        'patch_embed_ratio': 0.75,
+        'temp_attn_hidden': 512,
+        'n_kv_heads': 8,
         'return_attn_weights': False,
-        'stochastic_depth_rate': 0.05  
+        'stochastic_depth_rate': 0.10
     }
     
     if model_config is not None:
@@ -225,12 +227,14 @@ def run_analysis(
     print("STEP 4: Training")
     print("=" * 60)
 
+
     default_train_cfg = {
-        'epochs': 10000,
-        'lr': 3e-4,
-        'weight_decay': 2.3798658050870825e-05,
-        'patience': 90
+        'epochs': 5000,
+        'lr': 2.4e-5,
+        'weight_decay': 1.79e-6,
+        'patience': 95
     }
+
     if training_config:
         default_train_cfg.update(training_config)
 
