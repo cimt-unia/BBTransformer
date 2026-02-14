@@ -16,6 +16,6 @@ from .trainer.rank import (
     save_top_importance_to_csv,
     plot_importance
 )
-from .trainer.tune import tune_hyperparameters
-from .trainer.pred import Diagnostic
 
+from .trainer.tune import tune_hyperparameters, run_tuning_workflow
+from .trainer.pred import Diagnostic
