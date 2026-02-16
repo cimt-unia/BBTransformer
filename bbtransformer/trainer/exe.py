@@ -179,32 +179,31 @@ def run_analysis(
     torch.cuda.empty_cache()
     gc.collect()
     
-    # Updated defaults matching best parameters 
 
-# Updated best parameters 
 
+    # Updated best parameters 
     DEFAULT_BEST_HP = {
         'feature_dim': metadata['feature_dim'],
         'num_classes': 1,
         'embed_dim': 512,
         'num_heads': 16,
         'num_layers': 7,
-        'dropout_input': 0.177,      
-        'dropout_patch': 0.16,      
-        'dropout_attn': 0.157,       
-        'dropout_ffn': 0.251,        
-        'dropout_classifier': 0.0559, 
-        'dropout_temporal': 0.168,  
+        'n_kv_heads': 4,
+        'dropout_input': 0.18,
+        'dropout_patch': 0.16,
+        'dropout_attn': 0.15,
+        'dropout_ffn': 0.25,
+        'dropout_classifier': 0.07,
+        'dropout_temporal': 0.16,
         'embed_dim_age': 32,
         'embed_dim_ext': 16,
         'patch_size': 3,
         'patch_embed_ratio': 0.75,
         'temp_attn_hidden': 512,
-        'n_kv_heads': 8,
         'return_attn_weights': False,
-        'stochastic_depth_rate': 0.120,  
+        'stochastic_depth_rate': 0.07
     }
-    
+
 
     
     if model_config is not None:
@@ -232,11 +231,12 @@ def run_analysis(
 
 
     # Update training config
+
     default_train_cfg = {
         'epochs': 5000,
-        'lr': 2.50e-05,          
-        'weight_decay': 1.60e-06, 
-        'patience': 95
+        'lr': 2.3157e-05,
+        'weight_decay': 1.14e-06,
+        'patience': 90
     }
 
     if training_config:
