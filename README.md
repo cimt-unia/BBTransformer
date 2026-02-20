@@ -1,4 +1,5 @@
-# Brain Biomarker Transformer for fMRI Classification
+# BBT: Multivariate Time Series Transformer Model for fMRI Biomarker Discovery
+
 
 A minimal, modular, and interpretable foundation model for fMRI-based brain disorder classification using a multivariate time series model with rotary embeddings and grouped-query attention.
 
