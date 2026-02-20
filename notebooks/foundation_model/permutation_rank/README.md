@@ -1,5 +1,6 @@
 # Biomarker Discovery 
 
+<br>
 
 > **A sequential multi-task framework for identifying transdiagnostic neuroimaging biomarkers using interpretable deep learning**
 
@@ -16,8 +17,7 @@ Neuroimaging biomarkers hold promise for objective diagnosis, prognosis, and mec
 - **Rigorous validation gating**: Biomarker extraction only proceeds if model performance exceeds a composite threshold (default: ≥0.65).
 
 
-
----
+<br>
 
 ## 2. Methodology: Permutation Importance
 
@@ -36,7 +36,7 @@ A larger importance score indicates greater reliance of the model on that ROI fo
 
 > **Why permutation?** Unlike gradient- or attention-based methods, permutation importance is **model-agnostic**, **nonlinearly aware**, and directly tied to predictive utility—not internal activation magnitude.
 
----
+<br>
 
 ## 3. Supported Disorders (ICD/Phenotypic Groups)
 
@@ -49,7 +49,7 @@ A larger importance score indicates greater reliance of the model on that ROI fo
 | **Psychosis & Mood** | Schizophrenia Spectrum, Bipolar (F31) |
 | **Movement & Seizure** | Epilepsy/Status Epilepticus, Parkinson’s & Other Movement, Multiple Sclerosis |
 
----
+<br>
 
 ## 4. Implementation Details
 
@@ -75,7 +75,7 @@ A larger importance score indicates greater reliance of the model on that ROI fo
 | `importance_metric` | `'f1'` | Scoring metric; `'f1'` preferred for imbalanced labels |
 | `min_composite` | 0.65 | Performance gate for biomarker extraction |
 
----
+<br>
 
 ## 5. Output Artifacts
 
@@ -86,7 +86,7 @@ For each validated disorder, the following are saved in `results/`:
 
 
 
----
+<br>
 
 ## 6. Interpretation Guidelines
 
@@ -98,11 +98,13 @@ For each validated disorder, the following are saved in `results/`:
 
 
 
----
+<br>
 
+<br>
 
 ## Tables
----
+
+
 
 ### **1. Autism Spectrum Disorder (ASD)**
 
@@ -119,7 +121,7 @@ For each validated disorder, the following are saved in `results/`:
 | L_PI_ROI         | Left       | Parieto-Insular Vestibular Cortex    | VentralAttention    | Vestibular       | 0.0316     |
 | L_45_ROI         | Left       | Inferior Frontal Pars Triangularis (Broca's Area) | Language      | Broca            | 0.0314     |
 
----
+<br>
 
 ### **2. NervousSystem_Dementia_Developmental**
 
@@ -136,7 +138,7 @@ For each validated disorder, the following are saved in `results/`:
 | R_7Pm_ROI        | Right      | Medial Area 7P                       | DorsalAttention     | Parietal         | 0.0635     |
 | L_MIP_ROI        | Left       | Medial Intraparietal Area            | DorsalAttention     | Parietal         | 0.0635     |
 
----
+<br>
 
 ### **3. Psychopathology_Dementia**
 
@@ -153,7 +155,7 @@ For each validated disorder, the following are saved in `results/`:
 | L_V6_ROI         | Left       | Visual Area 6 (V6)                   | Visual              | Dorsal           | 0.0731     |
 | R_IP0_ROI        | Right      | Intraparietal Area 0                 | DorsalAttention     | Parietal         | 0.0731     |
 
----
+<br>
 
 ### **4. Psychopathology_Organic_Mental_Disorder**
 
@@ -170,7 +172,7 @@ For each validated disorder, the following are saved in `results/`:
 | L_7PL_ROI        | Left       | Posterolateral Area 7P               | DorsalAttention     | Parietal         | 0.0133     |
 | R_11l_ROI        | Right      | Lateral Orbitofrontal Area 11        | Limbic              | Orbitofrontal    | 0.0126     |
 
----
+<br>
 
 ### **5. NervousSystem_Inflammatory_Infectious**
 
@@ -187,7 +189,7 @@ For each validated disorder, the following are saved in `results/`:
 | L_LO2_ROI        | Left       | Lateral Occipital Area 2 (LO2)       | Visual              | Lateral          | 0.0048     |
 | L_IP2_ROI        | Left       | Intraparietal Area 2                 | DorsalAttention     | Parietal         | 0.0045     |
 
----
+<br>
 
 ### **6. NervousSystem_Cerebrovascular**
 
@@ -204,7 +206,7 @@ For each validated disorder, the following are saved in `results/`:
 | R_TPOJ1_ROI      | Right      | Temporoparietal Occipital Junction 1 | VentralAttention    | Junction         | 0.0174     |
 | L_PH_ROI         | Left       | Parahippocampal Area                 | Limbic              | Parahippocampal  | 0.0173     |
 
----
+<br>
 
 ### **7. ICD_F31_Bipolar**
 
@@ -221,7 +223,7 @@ For each validated disorder, the following are saved in `results/`:
 | R_IP0_ROI        | Right      | Intraparietal Area 0                 | DorsalAttention     | Parietal         | 0.0122     |
 | R_11l_ROI        | Right      | Lateral Orbitofrontal Area 11        | Limbic              | Orbitofrontal    | 0.0122     |
 
----
+<br>
 
 ### **8. Psychopathology_Schizophrenia_Spectrum**
 
@@ -238,7 +240,7 @@ For each validated disorder, the following are saved in `results/`:
 | R_7PC_ROI        | Right      | Superior Parietal Area 7PC           | DorsalAttention     | Parietal         | 0.1044     |
 | R_IFJa_ROI       | Right      | Anterior Inferior Frontal Junction   | Frontoparietal      | IFJ              | 0.1044     |
 
----
+<br>
 
 ### **9. NervousSystem_Epilepsy_Status_Epilepticus**
 
@@ -255,7 +257,7 @@ For each validated disorder, the following are saved in `results/`:
 | R_EC_ROI         | Right      | Entorhinal Cortex                    | Limbic              | MedialTemporal   | 0.0169     |
 | L_s6-8_ROI       | Left       | Superior Transitional Area 6-8       | Frontoparietal      | Premotor         | 0.0158     |
 
----
+<br>
 
 ### **10. NervousSystem_Parkinsons_Other_Movement**
 
@@ -272,7 +274,7 @@ For each validated disorder, the following are saved in `results/`:
 | L_s6-8_ROI       | Left       | Superior Transitional Area 6-8       | Frontoparietal      | Premotor         | 0.0303     |
 | L_v23ab_ROI      | Left       | Ventral Posterior Cingulate Area 23ab| DefaultMode         | PosteriorCingulate| 0.0287    |
 
----
+<br>
 
 ### **11. NervousSystem_Multiple_Sclerosis_Other_Demyelinating**
 
@@ -290,5 +292,6 @@ For each validated disorder, the following are saved in `results/`:
 | L_STSdp_ROI      | Left       | Dorsal Posterior Superior Temporal Sulcus | VentralAttention | Temporal         | 0.0022     |
 
 ---
+
 
 
