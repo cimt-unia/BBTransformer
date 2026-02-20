@@ -23,12 +23,7 @@ Neuroimaging biomarkers hold promise for objective diagnosis, prognosis, and mec
 
 Permutation importance measures the drop in predictive performance when a single feature’s association with the target is destroyed via random shuffling. Formally, for ROI \(i\):
 
-\[
-\text{Importance}_i = \text{Metric}_{\text{baseline}} - \frac{1}{N} \sum_{k=1}^{N} \text{Metric}_{\text{permuted}_i^{(k)}}
-\]
 
-where:
-- \(\text{Metric}\) is typically macro F1-score (robust to class imbalance),
 - \(N = 50\) permutations per ROI (configurable),
 - Shuffling is performed **across subjects** within mini-batches to preserve temporal structure while breaking label-ROI coupling.
 
@@ -292,6 +287,7 @@ For each validated disorder, the following are saved in `results/`:
 | L_STSdp_ROI      | Left       | Dorsal Posterior Superior Temporal Sulcus | VentralAttention | Temporal         | 0.0022     |
 
 ---
+
 
 
 
