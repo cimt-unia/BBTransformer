@@ -1,10 +1,11 @@
 # Biomarker Discovery 
 
+
 > **A sequential multi-task framework for identifying transdiagnostic neuroimaging biomarkers using interpretable deep learning**
 
 This repository implements a principled pipeline for **data-driven biomarker discovery** in large-scale neuroimaging cohorts. Leveraging the **BBTransformer** architecture and **permutation-based feature importance**, we rank the contribution of 414 cortical and subcortical Regions of Interest (ROIs) to diagnostic classification across 12 neurological and psychiatric conditions. Critically, the system employs **sequential transfer learning**: validated models from earlier disorders serve as pretrained weights for subsequent tasks, promoting stability and generalizability of identified biomarkers.
 
----
+
 
 ## 1. Overview
 
@@ -50,7 +51,7 @@ A larger importance score indicates greater reliance of the model on that ROI fo
 
 ---
 
-## 💻 4. Implementation Details
+## 4. Implementation Details
 
 ### 4.1 Core Functions
 
@@ -289,4 +290,5 @@ For each validated disorder, the following are saved in `results/`:
 | L_STSdp_ROI      | Left       | Dorsal Posterior Superior Temporal Sulcus | VentralAttention | Temporal         | 0.0022     |
 
 ---
+
 
