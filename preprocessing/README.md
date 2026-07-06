@@ -27,9 +27,9 @@
 
 ---
 
-### Loading Tutorial
+### Load Data
 
-Open files
+
 
 ```python
 import numpy as np
@@ -49,7 +49,7 @@ print(X.shape)
 # Output will look like: (585, 150, 414)
 
 # 4. Understand the dimensions:
-# - The first number (e.g., 585) is how many people/scans are in this specific file.
+# - The first number (e.g., 585) is how many subjects are in this specific file.
 # - The second number (150) is the timepoints (5 minutes of data).
 # - The third number (414) is the brain regions (ROIs).
 ```
