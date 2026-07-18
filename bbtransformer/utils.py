@@ -120,9 +120,6 @@ def list_available_weights():
 # GT ATLAS UTILITIES
 # ======================
 
-# ======================
-# GT ATLAS UTILITIES
-# ======================
 
 def load_roi_metadata():
     """Load full 414 ROI metadata from Glasser+Tian atlas."""
