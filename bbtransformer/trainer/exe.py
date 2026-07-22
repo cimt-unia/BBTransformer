@@ -17,7 +17,7 @@ from .eval import evaluate_model
 from .loader import prepare_fmri_data
 from .rank import calculate_permutation_importance, save_top_importance_to_csv
 from .train import train_model
-from .viz import plot_importance, plot_results
+from .viz import plot_brain, plot_importance, plot_network_summary, plot_results
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,8 @@ def _save_results(
     probs: np.ndarray,
     targets: np.ndarray,
 ) -> None:
-    """Save evaluation plots, importance CSVs, and JSON summary using project_name for filenames."""
+    """Save all evaluation plots, importance CSVs, brain overlays, and JSON summary."""
+    # 1. Evaluation Dashboard (always saved when flag is set)
     if save_plots_flag:
         plot_results(
             metrics=metrics,
@@ -137,6 +138,7 @@ def _save_results(
             show=True,
         )
 
+    # 2-4. Importance-based visualizations (only when scores are available)
     if importance_scores is not None:
         save_top_importance_to_csv(
             importance_scores=importance_scores,
@@ -145,7 +147,9 @@ def _save_results(
             top_n=5,
             save_path=output_dir / f"importance_{project_name}.csv",
         )
+
         if save_plots_flag:
+            # 2. Top ROI Bar Chart
             plot_importance(
                 importance_scores=importance_scores,
                 top_n=5,
@@ -154,6 +158,31 @@ def _save_results(
                 show=True,
             )
 
+            # 3. Brain Overlay (graceful degradation if gt_map unavailable)
+            try:
+                plot_brain(
+                    importance_scores=importance_scores,
+                    top_n=5,
+                    target_name=project_name,
+                    label_type="full",
+                    cmap="Pastel2_r",
+                    show=True,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Brain overlay skipped (gt_map may be unavailable): %s", e
+                )
+
+            # 4. Network Summary
+            plot_network_summary(
+                importance_scores=importance_scores,
+                target_name=project_name,
+                save_path=output_dir / f"network_{project_name}.png",
+                show=True,
+                cmap="Pastel2_r",
+            )
+
+    # 5. JSON Summary
     if save_json_flag:
         json_metrics = {
             k: float(v) if isinstance(v, (np.number, float, int)) else v
@@ -225,7 +254,7 @@ def run_analysis(
         random_seed: Random seed for reproducibility.
         device: Device for model execution ('cpu' or 'cuda').
         batch_size: Batch size for data loaders.
-        save_plots: Whether to save evaluation and importance plots.
+        save_plots: Whether to save and display all evaluation and importance plots.
         save_json: Whether to save a JSON summary of results.
         early_stop_metric: Metric for early stopping ('f1' or 'loss').
         use_focal_loss: Whether to use adaptive focal loss.
