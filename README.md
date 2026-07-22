@@ -39,7 +39,7 @@ Final output: Single probability via sigmoid for binary classification.
 
 ## Quick Start (Recommended)
 
-The simplest way to run a full analysis pipeline (training + evaluation + biomarker discovery) is via `run_analysis` [1]:
+The simplest way to run a full analysis pipeline (training + evaluation + biomarker discovery) is via `run_analysis`:
 
 ```python
 from bbtransformer import run_analysis
@@ -57,7 +57,7 @@ print(f"F1 Score: {results['metrics']['f1']:.4f}")
 print(f"Top ROI:  {results['importance_scores'].argmax()}")
 ```
 
-> ⚠️ **Critical Data Requirement**: Your phenotype CSV **must** contain columns matching `[target_column]`, `Age`, and `Sex`. Missing columns will raise a `ValueError` during validation [3].
+> ⚠️ **Critical Data Requirement**: Your phenotype CSV **must** contain columns matching `[target_column]`, `Age`, and `Sex`. Missing columns will raise a `ValueError` during validation.
 
 ### Output Files
 When `save_plots=True` and `save_json=True`, the following are generated in `results/`:
@@ -69,7 +69,7 @@ When `save_plots=True` and `save_json=True`, the following are generated in `res
 
 ## Advanced: Component-Level API
 
-For custom workflows, all components are individually accessible [4]:
+For custom workflows, all components are individually accessible:
 
 ```python
 import bbtransformer as bbt
@@ -107,20 +107,20 @@ print(result['interpretation'])
 ## Key Features
 
 ### Architecture
--   **Rotary Positional Embeddings** for temporal awareness [2]
+-   **Rotary Positional Embeddings** for temporal awareness
 -   **Grouped-Query Attention (GQA)** for memory efficiency
 -   **Multi-scale fusion** via patch embedding + cross-attention
 -   **Stochastic Depth** (DropPath) for regularization
 
 ### Training
--   **Ranger21 optimizer** with internal LR scheduling [5]
--   **Adaptive Focal Loss** for class imbalance [5]
+-   **Ranger21 optimizer** with internal LR scheduling
+-   **Adaptive Focal Loss** for class imbalance
 -   **Early stopping** on F1 or validation loss
 -   **Mixed precision** training via `torch.amp`
 
 ### Interpretation
--   **Permutation importance** for brain region ranking [6]
--   **Single-subject diagnosis** with confidence scoring (`Diagnostic` class) [7]
+-   **Permutation importance** for brain region ranking
+-   **Single-subject diagnosis** with confidence scoring (`Diagnostic` class)
 -   **Attention visualization** (when `return_attn_weights=True`)
 
 <br>
@@ -131,43 +131,21 @@ print(result['interpretation'])
 pip install git+https://github.com/cimt-unia/BBTransformer.git
 ```
 
-For private repositories, configure git credentials locally instead of embedding tokens:
-```bash
-git config --global credential.helper store
-pip install git+https://github.com/cimt-unia/BBTransformer.git
-```
-
-### Requirements
--   Python 3.8–3.12 (**PyTorch does not support 3.13 yet**)
--   PyTorch ≥ 2.0
--   nilearn (for preprocessing)
--   pytorch_optimizer, optuna ≥ 3.0
--   scikit-learn, pandas, numpy, matplotlib, seaborn, tqdm
-
-Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-<br>
-
-## Supported Datasets
-
-| Dataset      | Conditions                  | Atlas                |
-| ------------ | --------------------------- | -------------------- |
-| **ADHD-200** | ADHD vs Controls            | Glasser+Tian (414)   |
-| **ABIDE**    | ASD vs Controls             | Glasser+Tian (414)   |
-| **UK Biobank** | ICD F32, G20, G40, etc.   | Glasser+Tian (414)   |
 
 
 <br>
 
-## 📘 Tutorials & Analysis
 
--   `notebooks/tutorials/hyperparameter_tuning.ipynb` – Optuna-based tuning with YFT composite scoring
--   `notebooks/tutorials/transfer_learning.ipynb` – Fine-tuning pretrained weights
--   `preprocessing/UKBB/balance_cohorts/Cohort_creation.ipynb` – Cohort balancing utilities
--   `notebooks/analysis/` – Reproducible analysis notebooks for ADHD, ASD, PDD, Sex classification
+### Datasets
+
+| Dataset        | Conditions                              | Atlas              | Preprocessing      | Role               |
+| :------------- | :-------------------------------------- | :----------------- | :----------------- | :----------------- |
+| **ABIDE**      | ASD vs Controls                         | Glasser+Tian (414) | C-PAC              | Foundation Model   |
+| **UK Biobank** | ICD F32, G20, G40, etc. (10 conditions) | Glasser+Tian (414) | Official UKB Pipeline | Transfer Learning  |
+| **ADHD-200**   | ADHD vs Controls                        | Glasser+Tian (414) | Athena (AFNI/FSL)  | External Validation |
+| **UCLA LA5c**  | Schizophrenia, Bipolar, ADHD vs Controls | Glasser+Tian (414) | fMRIPrep v0.4.4    | External Validation |
+
+> ⚠️ **Note**: All datasets are standardized to **150 timepoints @ 2.0s TR** across 414 ROIs via cubic spline interpolation and per-subject z-scoring before model input
 
 <br>
 
