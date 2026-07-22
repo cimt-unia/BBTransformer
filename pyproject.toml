@@ -18,9 +18,12 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Medical Science Apps."
 ]
+
 dependencies = [
     "torch>=2.0",
     "nilearn",
+    "nibabel",
+    "gt_map @ git+https://github.com/cimt-unia/gt_map.git",
     "pytorch_optimizer",
     "optuna>=3.0",
     "scikit-learn",
