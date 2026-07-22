@@ -16,189 +16,194 @@ Trained on 414-region Glasser+Tian parcellated time series, BBTransformer enable
 
 <br>
 
-
-
 <br>
 
 ## Model Architecture
 
-BBTransformer processes **150 × 414** fMRI time series through three integrated streams:
+BBTransformer processes **150 × 414** fMRI time series through three integrated streams [2]:
 
-1. **Primary Temporal Stream**:  
-   - 6 transformer layers  
-   - 512-dim embeddings, 8 query heads, 4 KV heads (GQA)  
-   - Rotary position embeddings, RMSNorm, SwiGLU  
+1.  **Primary Temporal Stream**:
+    -   7 transformer layers
+    -   512-dim embeddings, 16 query heads, 4 KV heads (GQA)
+    -   Rotary position embeddings (RoPE), RMSNorm, SwiGLU
+2.  **Local Patch Stream**:
+    -   Patch size 3 with cross-attention fusion
+    -   Captures short-scale temporal dynamics
+3.  **Temporal Attention Pooling**:
+    -   Learned weighting of timepoints for diagnostic decisions
+    -   Integrates confounder embeddings (Age, Sex)
 
-2. **Local Patch Stream**:  
-   - Flexible Patch size
-   - Cross-attention fusion at layer 4  
+Final output: Single probability via sigmoid for binary classification.
 
-3. **Temporal Attention Pooling**:  
-   - Learned weighting of timepoints for diagnostic decisions  
+<br>
 
-Final output: single probability via sigmoid for binary classification.
+## Quick Start (Recommended)
 
----
+The simplest way to run a full analysis pipeline (training + evaluation + biomarker discovery) is via `run_analysis` [1]:
 
-## Quick Start
+```python
+from bbtransformer import run_analysis
 
-### 1. Install as a Package
-```bash
-TOKEN = "ghp_"
-!python -m pip install --user git+https://$TOKEN@github.com/cimt-unia/BBTransformer.git
+results = run_analysis(
+    target_column="ADHD",                    # Binary column in CSV
+    data_path="dataset/fmri_ADHD.npz",       # fMRI features (.npz)
+    pheno_path="dataset/pheno_ADHD.csv",     # Phenotype data (.csv)
+    use_pretrained=False,                    # Set True for transfer learning
+    compute_importance=True,                 # Rank brain regions
+    save_plots=True                          # Auto-save evaluation figures
+)
+
+print(f"F1 Score: {results['metrics']['f1']:.4f}")
+print(f"Top ROI:  {results['importance_scores'].argmax()}")
 ```
 
+> ⚠️ **Critical Data Requirement**: Your phenotype CSV **must** contain columns matching `[target_column]`, `Age`, and `Sex`. Missing columns will raise a `ValueError` during validation [3].
 
+### Output Files
+When `save_plots=True` and `save_json=True`, the following are generated in `results/`:
+-   `{target}_results.png`: ROC Curve, Precision-Recall, Confusion Matrix, Calibration Curve
+-   `{target}_results.json`: Metrics summary + top 10 important ROIs with anatomical names
+-   `importance_{target}.csv`: Ranked list of all 414 brain regions
 
-### 2. Prepare Data (Dataset-Specific)
-Run preprocessing notebooks to generate `.npz` + `.csv`:
-```bash
-jupyter notebook preprocessing/ADHD200/prepare_adhd200_gt.ipynb
-```
+<br>
 
-### 3. Train or Fine-Tune
+## Advanced: Component-Level API
+
+For custom workflows, all components are individually accessible [4]:
+
 ```python
 import bbtransformer as bbt
 
-# Load data
+# 1. Load data with stratified splits & age normalization
 train_loader, val_loader, test_loader, metadata = bbt.prepare_fmri_data(
     data_path='dataset/fmri_ADHD.npz',
     pheno_path='dataset/pheno_ADHD.csv',
     target_column='ADHD'
 )
 
-# Create model
+# 2. Create model with custom architecture
 model = bbt.create_bbtransformer({
     'feature_dim': 414,
-    'embed_dim': 512,
-    'num_heads': 8,
-    'num_layers': 6,
-    # ... other hyperparameters
+    'embed_dim': 256,      # Override default 512
+    'num_heads': 8,        # Override default 16
+    'num_layers': 4        # Override default 7
 })
 
-# Train
-trained_model = bbt.train_model(model, train_loader, val_loader)
+# 3. Train with Ranger21 + early stopping
+trained_model = bbt.train_model(
+    model, train_loader, val_loader,
+    early_stop_metric="f1",
+    use_focal_loss=True   # For imbalanced datasets
+)
 
-# Save
-bbt.save_model_weights(trained_model, target_name='ADHD')
-```
-
-### 4. Interpret Results
-```python
-# Permutation importance
-roi_names = bbt.load_roi_names()  # No path needed
-importance = bbt.calculate_permutation_importance(trained_model, val_loader, 414)
-bbt.plot_importance(importance, roi_names, top_n=30)
-
-# Single-subject prediction
+# 4. Single-subject diagnosis with confidence
 predictor = bbt.Diagnostic(trained_model, metadata)
 result = predictor.predict_single(fmri, age=56.3, ext=1)
 print(result['interpretation'])
 ```
 
----
+<br>
 
 ## Key Features
 
 ### Architecture
-- **Rotary Positional Embeddings** for temporal awareness
-- **Grouped-Query Attention (GQA)** for efficiency
-- **Multi-scale fusion** with patch embedding
-- **Temporal attention pooling** for sequence summarization
+-   **Rotary Positional Embeddings** for temporal awareness [2]
+-   **Grouped-Query Attention (GQA)** for memory efficiency
+-   **Multi-scale fusion** via patch embedding + cross-attention
+-   **Stochastic Depth** (DropPath) for regularization
 
 ### Training
-- **Ranger21 optimizer** with cosine annealing
-- **Flexible loss**: BCE, Focal Loss, Adaptive Focal Loss
-- **Early stopping** on loss, AUC, or F1
+-   **Ranger21 optimizer** with internal LR scheduling [5]
+-   **Adaptive Focal Loss** for class imbalance [5]
+-   **Early stopping** on F1 or validation loss
+-   **Mixed precision** training via `torch.amp`
 
 ### Interpretation
-- **Permutation importance** for brain region ranking
-- **Single-subject diagnosis** with confidence scoring (`Diagnostic` class)
-- **Attention visualization** (when `return_attn_weights=True`)
+-   **Permutation importance** for brain region ranking [6]
+-   **Single-subject diagnosis** with confidence scoring (`Diagnostic` class) [7]
+-   **Attention visualization** (when `return_attn_weights=True`)
 
----
+<br>
 
-## Supported Datasets
+## Installation
 
-| Dataset | Conditions | Atlas |
-|--------|------------|-------|
-| **ADHD-200** | ADHD vs Controls | Glasser+Tian (414 ROIs) |
-| **ABIDE** | ASD vs Controls | Glasser+Tian (414 ROIs) |
-| **UK Biobank** | ICD F32, G20, G40, etc. | Glasser+Tian (414 ROIs) |
-| **NAKO** | (In progress) | Glasser+Tian (414 ROIs) |
-
----
-
-## 📈 Analysis Projects
-
-- `notebooks/analysis/ADHD_adhd200_classification/`
-- `notebooks/analysis/ASD_abide_classification/`
-- `notebooks/analysis/PDD_ukbb_classification/`
-- `notebooks/analysis/Sex_ukbb_classification/`
-
-## 📘 Tutorials
-
-- `notebooks/tutorials/hyperparameter_tuning.ipynb`
-- `notebooks/tutorials/transfer_learning.ipynb`
-- `preprocessing/UKBB/balance_cohorts/Cohort_creation.ipynb`
-
----
-
-## ⚙️ Configuration
-
-Best hyperparameters from Optuna tuning:
-```python
-BEST_HP = {
-    'feature_dim': 414,
-    'embed_dim': 512,
-    'num_heads': 8,
-    'num_layers': 6,
-    'dropout_input': 0.27,
-    'dropout_classifier': 0.03,
-    'patch_size': 3,
-    'embed_dim_age': 32,
-    'embed_dim_ext': 16,
-    # ...
-}
+```bash
+pip install git+https://github.com/cimt-unia/BBTransformer.git
 ```
 
----
+For private repositories, configure git credentials locally instead of embedding tokens:
+```bash
+git config --global credential.helper store
+pip install git+https://github.com/cimt-unia/BBTransformer.git
+```
 
-## 📦 Requirements
+### Requirements
+-   Python 3.8–3.12 (**PyTorch does not support 3.13 yet**)
+-   PyTorch ≥ 2.0
+-   nilearn (for preprocessing)
+-   pytorch_optimizer, optuna ≥ 3.0
+-   scikit-learn, pandas, numpy, matplotlib, seaborn, tqdm
 
-- Python 3.8–3.12 (**PyTorch does not support 3.13 yet**)
-- PyTorch ≥ 2.0
-- nilearn (for preprocessing)
-- pytorch_optimizer, optuna ≥ 3.0
-- scikit-learn, pandas, numpy, matplotlib, seaborn, tqdm, jupyter
-
-Install via:
+Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
----
+<br>
+
+## Supported Datasets
+
+| Dataset      | Conditions                  | Atlas                |
+| ------------ | --------------------------- | -------------------- |
+| **ADHD-200** | ADHD vs Controls            | Glasser+Tian (414)   |
+| **ABIDE**    | ASD vs Controls             | Glasser+Tian (414)   |
+| **UK Biobank** | ICD F32, G20, G40, etc.   | Glasser+Tian (414)   |
+
+
+<br>
+
+## 📘 Tutorials & Analysis
+
+-   `notebooks/tutorials/hyperparameter_tuning.ipynb` – Optuna-based tuning with YFT composite scoring
+-   `notebooks/tutorials/transfer_learning.ipynb` – Fine-tuning pretrained weights
+-   `preprocessing/UKBB/balance_cohorts/Cohort_creation.ipynb` – Cohort balancing utilities
+-   `notebooks/analysis/` – Reproducible analysis notebooks for ADHD, ASD, PDD, Sex classification
+
+<br>
+
+## ⚙️ Default Configuration
+
+Best hyperparameters from clinically validated Optuna tuning [2]:
+
+```python
+DEFAULT_HP = {
+    'feature_dim': 414,
+    'embed_dim': 512,
+    'num_heads': 16,
+    'num_layers': 7,
+    'n_kv_heads': 4,
+    'dropout_input': 0.17,
+    'dropout_classifier': 0.04,
+    'patch_size': 3,
+    'stochastic_depth_rate': 0.10,
+    'embed_dim_age': 32,
+    'embed_dim_ext': 16,
+}
+```
+
+<br>
 
 ## 📁 Project Structure
 
 ```
 BBT/
 ├── bbtransformer/          # Core package (installable)
-│   ├── __init__.py
+│   ├── __init__.py         # Public API exports
 │   ├── model.py            # BBTransformer, create_bbtransformer
-│   ├── utils.py            # load_roi_names, weight utilities
-│   └── trainer/            # train, eval, rank, pred, tune
+│   ├── utils.py            # Weight I/O, ROI metadata loading
+│   └── trainer/            # exe, train, eval, rank, pred, tune, loader
 ├── notebooks/              # Analysis & tutorials
 ├── preprocessing/          # Dataset-specific curation
-└── weights/                # (User-provided) pretrained weights
+└── weights/                # Pretrained & fine-tuned model weights
 ```
-
-All functions are accessible via:
-```python
-from bbtransformer import prepare_fmri_data, create_bbtransformer, Diagnostic, ...
-# or
-import bbtransformer as bbt
-```
-
-
 
