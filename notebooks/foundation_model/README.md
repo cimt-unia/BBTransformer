@@ -1,10 +1,9 @@
-**BBT: Multivariate Time Series Transformer Model for fMRI Biomarker Discovery**
+# **BBT: Multivariate Time Series Transformer Model for fMRI Biomarker Discovery**
 
-*J.L.*
 
 Chair of Informatics for Medical Technologies (CIMT)
 
-University of A
+<br>
 
 # **Abstract**
 
