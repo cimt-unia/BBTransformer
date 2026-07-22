@@ -55,12 +55,12 @@ def _resolve_paths(
     base_dir: Optional[str],
     target_column: str,
 ) -> tuple[str, str]:
-    """Resolve fMRI and phenotype file paths."""
+    """Resolve fMRI and phenotype file paths to absolute string paths."""
     if data_path is not None and pheno_path is not None:
-        return data_path, pheno_path
+        return str(Path(data_path).resolve()), str(Path(pheno_path).resolve())
     if base_dir is not None:
-        resolved_data = str(Path(base_dir) / f"fmri_{target_column}.npz")
-        resolved_pheno = str(Path(base_dir) / f"pheno_{target_column}.csv")
+        resolved_data = str(Path(base_dir).resolve() / f"fmri_{target_column}.npz")
+        resolved_pheno = str(Path(base_dir).resolve() / f"pheno_{target_column}.csv")
         return resolved_data, resolved_pheno
     raise ValueError("Either (data_path and pheno_path) or base_dir must be provided.")
 
@@ -199,6 +199,7 @@ def run_analysis(
     compute_importance: bool = True,
     random_seed: int = 42,
     device: Optional[str] = None,
+    batch_size: int = 64,
     save_plots: bool = True,
     save_json: bool = True,
     early_stop_metric: str = "f1",
@@ -218,11 +219,12 @@ def run_analysis(
         pheno_path: Full path to phenotype .csv file.
         base_dir: Legacy fallback directory for automatic path resolution.
         project_root: Root directory for weights and results.
-        pretrained_weight_file: Filename of pretrained weights.
+        pretrained_weight_file: Path to pretrained weights (absolute or relative to weights_dir).
         use_pretrained: Whether to load pretrained weights.
         compute_importance: Whether to compute permutation importance.
         random_seed: Random seed for reproducibility.
         device: Device for model execution ('cpu' or 'cuda').
+        batch_size: Batch size for data loaders.
         save_plots: Whether to save evaluation and importance plots.
         save_json: Whether to save a JSON summary of results.
         early_stop_metric: Metric for early stopping ('f1' or 'loss').
@@ -235,14 +237,13 @@ def run_analysis(
     Returns:
         Dictionary containing metrics, trained model, metadata, and importance scores.
     """
-    # Default project_name to target_column for backward compatibility
     if project_name is None:
         project_name = target_column
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    root_path = Path(project_root)
+    root_path = Path(project_root).resolve()
     weights_dir = root_path / "weights"
     output_dir = root_path / "results"
 
@@ -260,13 +261,15 @@ def run_analysis(
     fmri_data = features["data"]
     subject_ids = features["subject_ids"]
 
+    # Support both absolute paths and filenames relative to weights_dir
     weight_path: Optional[str] = None
     if use_pretrained:
         if pretrained_weight_file is None:
             raise ValueError(
                 "pretrained_weight_file must be provided when use_pretrained=True"
             )
-        weight_path = str(weights_dir / pretrained_weight_file)
+        p = Path(pretrained_weight_file)
+        weight_path = str(p.resolve()) if p.is_absolute() else str(weights_dir / p)
 
     _validate_inputs(
         resolved_data_path, resolved_pheno_path, weight_path, pheno_df, target_column
@@ -283,7 +286,7 @@ def run_analysis(
         target_column=target_column,
         age_column="Age",
         ext_column="Sex",
-        batch_size=64,
+        batch_size=batch_size,
         train_split=0.7,
         val_split=0.15,
         test_split=0.15,
@@ -325,7 +328,14 @@ def run_analysis(
         early_stop_metric=early_stop_metric,
     )
 
-    save_model_weights(trained_model, target_name=project_name, safe_format=True)
+    # Save weights explicitly to project_root/weights, not global WEIGHTS_DIR
+    final_weight_path = str(weights_dir / f"weights_{project_name}.pth")
+    save_model_weights(
+        trained_model,
+        target_name=project_name,
+        save_path=final_weight_path,
+        safe_format=True,
+    )
 
     metrics, probs, targets = evaluate_model(trained_model, test_loader)
 
