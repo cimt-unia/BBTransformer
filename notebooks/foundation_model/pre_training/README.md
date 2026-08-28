@@ -94,18 +94,19 @@ This approach enforces **clinical interpretability** while maximizing knowledge 
 
 ## **3. Empirical Results: Master Transfer Learning Progression Table**
 
-| Phase | Target Disorder | Cohort Size (Cases/Controls) | Test Set | F1 | Accuracy | Precision | Recall | ROC-AUC | Status |
-|-------|------------------|------------------------------|----------|-----|----------|-----------|--------|---------|--------|
-| **0** | **`Autism Spectrum Disorder`** | **271/314** | **59** | **0.7579** | **0.7386** | **0.6667** | **0.8780** | **0.7283** | ✅ Foundation |
-| **1** | `NervousSystem_Dementia_Developmental` | 61/61 | 19 | **0.7778** | 0.7895 | 0.7778 | 0.7778 | 0.7889 | ✅ |
-| **2** | `Psychopathology_Dementia` | 49/49 | 15 | **0.9231** | 0.9333 | **1.0000** | 0.8571 | 0.9286 | ✅ |
-| **3** | `Psychopathology_Organic_Mental_Disorder` | 90/90 | 27 | **0.9231** | 0.9259 | **0.9231** | 0.9231 | 0.9533 | ✅ |
-| **4** | `NervousSystem_Inflammatory_Infectious` | 46/46 | 14 | **0.8000** | 0.7857 | 0.7500 | 0.8571 | 0.8673 | ✅ |
-| **5** | `NervousSystem_Cerebrovascular` | 296/296 | 89 | **0.7434** | 0.6742 | 0.6176 | 0.9333 | 0.7116 | ✅ |
-| **6** | `ICD_F31_Bipolar` | 55/55 | 17 | **0.8571** | 0.8824 | **1.0000** | 0.7500 | 0.8472 | ✅ |
-| **7** | `Psychopathology_Schizophrenia_Spectrum` | 33/33 | 10 | **0.7500** | 0.8000 | **1.0000** | 0.6000 | 0.8400 | ✅ |
-| **8** | `NervousSystem_Epilepsy_Status_Epilepticus` | 171/171 | 52 | **0.6786** | 0.6538 | 0.6333 | 0.7308 | 0.6672 | ✅ |
-| **9** | `NervousSystem_Parkinsons_Other_Movement` | 208/208 | 63 | **0.7213** | 0.7302 | 0.7333 | 0.7097 | 0.7782 | ✅ |
+| Phase | Target Disorder | Cases/Controls | F1 | Accuracy | Precision | Recall | ROC-AUC |
+|-------|------------------|------------------------------|-----|----------|-----------|--------|---------|
+| **0** | **`Autism Spectrum Disorder`** | **271/314** | **0.7579** | **0.7386** | **0.6667** | **0.8780** | **0.7283** |
+| **1** | `NervousSystem_Dementia_Developmental` | 61/61 | **0.7778** | 0.7895 | 0.7778 | 0.7778 | 0.7889 |
+| **2** | `Psychopathology_Dementia` | 49/49 | **0.9231** | 0.9333 | **1.0000** | 0.8571 | 0.9286 |
+| **3** | `Organic_Mental_Disorder` | 90/90 | **0.9231** | 0.9259 | **0.9231** | 0.9231 | 0.9533 |
+| **4** | `NervousSystem_Inflammatory_Infectious` | 46/46 | **0.8000** | 0.7857 | 0.7500 | 0.8571 | 0.8673 |
+| **5** | `NervousSystem_Cerebrovascular` | 296/296 | **0.7434** | 0.6742 | 0.6176 | 0.9333 | 0.7116 |
+| **6** | `ICD_F31_Bipolar` | 55/55 | **0.8571** | 0.8824 | **1.0000** | 0.7500 | 0.8472 |
+| **7** | `Schizophrenia_Spectrum` | 33/33 | **0.7500** | 0.8000 | **1.0000** | 0.6000 | 0.8400 |
+| **8** | `Epilepsy_Status_Epilepticus` | 171/171 | **0.6786** | 0.6538 | 0.6333 | 0.7308 | 0.6672 |
+| **9** | `Parkinsons_Other_Movement` | 208/208 | **0.7213** | 0.7302 | 0.7333 | 0.7097 | 0.7782 |
+| **10** | `Multiple_Sclerosis_Other_Demyelinating` | 82/82 | **0.8333** | 0.8400 | **0.8333** | 0.8333 | **0.9167** |
 | **10** | `NervousSystem_Multiple_Sclerosis_Other_Demyelinating` | 82/82 | 25 | **0.8333** | 0.8400 | **0.8333** | 0.8333 | **0.9167** | ✅ |
 
 > 📌 **Key**: All phases used **clinically valid models** (all metrics ≥0.60). Pipeline successfully traverses neurodevelopmental → neurodegenerative → inflammatory → vascular → circuit dysfunction → white matter pathology.
