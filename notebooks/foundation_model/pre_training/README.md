@@ -109,7 +109,7 @@ This approach enforces **clinical interpretability** while maximizing knowledge 
 | **8** | `NervousSystem_Epilepsy_Status_Epilepticus` | 171/171 | **0.67** | 0.65 | 0.63 | 0.73 | 0.66 |
 | **9** | `NervousSystem_Parkinsons_Other_Movement` | 208/208 | **0.72** | 0.73 | 0.73 | 0.70 | 0.77 |
 | **10** | `NervousSystem_Multiple_Sclerosis_Other_Demyelinating` | 82/82 | **0.83** | 0.84 | **0.83** | 0.83 | **0.91** |
-| **10** | `NervousSystem_Multiple_Sclerosis_Other_Demyelinating` | 82/82 | **0.8333** | 0.8400 | **0.8333** | 0.8333 | **0.9167** |
+
 
 > 📌 **Key**: All phases used **clinically valid models** (all metrics ≥0.60). Pipeline successfully traverses neurodevelopmental → neurodegenerative → inflammatory → vascular → circuit dysfunction → white matter pathology.
 
