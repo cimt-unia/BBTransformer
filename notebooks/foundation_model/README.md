@@ -1,8 +1,8 @@
-**BBT: A Multivariate Time Series Transformer for Modeling Stochastic Dynamical Systems in the Human Brain**
+# **BBT: A Multivariate Time Series Transformer for Modeling Stochastic Dynamical Systems in the Human Brain**
 
-*J.Zorraquin*
 
-Chair of Informatics for Medical Technologies (CIMT), University of Augsburg
+
+Chair of Informatics for Medical Technologies (CIMT), University of Augsburg *J.Z.*
 
 # **Abstract**
 
