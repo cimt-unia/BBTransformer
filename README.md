@@ -2,7 +2,7 @@
 
 
 
-Chair of Informatics for Medical Technologies (CIMT), University of Augsburg - Author: *J.Zorraquin*
+Chair of Informatics for Medical Technologies (CIMT), University of Augsburg - Author: *J.Zorraquin* 
 
 <br>
 
@@ -16,102 +16,125 @@ To overcome data scarcity and leverage shared neurobiological principles, we imp
 
 <br>
 
-
+<br>
 
 
 <img width="1408" height="768" alt="ukbb_diagram" src="https://github.com/user-attachments/assets/f343fb1e-9a25-49c6-ae17-2f8f0cb226df" />
 
+***Figure 1.** BBT full diagram. Three parallel streams process the raw 150 × 414 BOLD input: (1) a Global Stream with a 7-layer GQA+RoPE+SwiGLU transformer encoder; (2) a Local Patch Stream producing coarse temporal tokens integrated via cross-attention; and (3) a Confounder Stream encoding age and biological sex as learned embeddings. Temporal attention pooling produces a single diagnostic embedding passed to a final MLP classifier.*
+
+<br>
+
+
 
 
 <br>
 
-<br>
+## Installation
 
-## Model Architecture
-
-BBTransformer processes **150 × 414** fMRI time series through three integrated streams [2]:
-
-1.  **Primary Temporal Stream**:
-    -   7 transformer layers
-    -   512-dim embeddings, 16 query heads, 4 KV heads (GQA)
-    -   Rotary position embeddings (RoPE), RMSNorm, SwiGLU
-2.  **Local Patch Stream**:
-    -   Patch size 3 with cross-attention fusion
-    -   Captures short-scale temporal dynamics
-3.  **Temporal Attention Pooling**:
-    -   Learned weighting of timepoints for diagnostic decisions
-    -   Integrates confounder embeddings (Age, Sex)
-
-Final output: Single probability via sigmoid for binary classification.
+```bash
+pip install git+https://github.com/cimt-unia/BBTransformer.git
+```
 
 <br>
 
-## Quick Start (Recommended)
+## Datasets standardization
 
-The simplest way to run a full analysis pipeline (training + evaluation + biomarker discovery) is via `run_analysis`:
+| Dataset        | Conditions                              | Atlas              | Preprocessing      | Role               |
+| :------------- | :-------------------------------------- | :----------------- | :----------------- | :----------------- |
+| **ABIDE**      | ASD vs Controls                         | Glasser+Tian (414) | C-PAC              | Foundation Model   |
+| **UK Biobank** | ICD F32, G20, G40, etc. (10 conditions) | Glasser+Tian (414) | Official UKB Pipeline | Transfer Learning  |
+| **ADHD-200**   | ADHD vs Controls                        | Glasser+Tian (414) | Athena (AFNI/FSL)  | External Validation |
+| **UCLA LA5c**  | Schizophrenia, Bipolar, ADHD vs Controls | Glasser+Tian (414) | fMRIPrep v0.4.4    | External Validation |
+
+> **Note**: All datasets are standardized to **150 timepoints @ 2.0s TR** across 414 ROIs via cubic spline interpolation and per-subject z-scoring before model input
+
+<br>
+
+
+
+
+<br>
+
+## Fine-tune (Usage Example)
 
 ```python
-from bbtransformer import run_analysis
+"""Fine-tune BBTransformer on ASD vs ADHD cohort."""
+
+import logging
+from pathlib import Path
+
+from bbtransformer.trainer.exe import run_analysis
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+
+# BASE_DIR / "/absolute/path" produces an invalid double path.
+# Use the absolute path directly since it is already complete.
+DATA_PATH = "/mnt/movement/users/jaizor/xtra/data/fmri/chrt/fmri_ASD_vs_ADHD.npz"
+PHENO_PATH = "/mnt/movement/users/jaizor/xtra/data/fmri/chrt/pheno_ASD_vs_ADHD.csv"
+PRETRAINED_WEIGHTS = "/mnt/movement/users/jaizor/xtra/notebooks/BBT/notebooks/_/master_file/weights/weights_modex.pth"
 
 results = run_analysis(
-    target_column="ADHD",                    # Binary column in CSV
-    data_path="dataset/fmri_ADHD.npz",       # fMRI features (.npz)
-    pheno_path="dataset/pheno_ADHD.csv",     # Phenotype data (.csv)
-    use_pretrained=False,                    # Set True for transfer learning
-    compute_importance=True,                 # Rank brain regions
-    save_plots=True                          # Auto-save evaluation figures
-)
+    # --- DATA IDENTIFICATION ---
+    target_column="target_label",
+    project_name="ASD_vs_ADHD_finetune",  
+    data_path=DATA_PATH,
+    pheno_path=PHENO_PATH,
+    base_dir=None,
 
-print(f"F1 Score: {results['metrics']['f1']:.4f}")
-print(f"Top ROI:  {results['importance_scores'].argmax()}")
-```
+    # --- PROJECT STRUCTURE ---
+    project_root=".",
+    use_pretrained=True,
+    pretrained_weight_file=PRETRAINED_WEIGHTS, 
 
-> ⚠️ **Critical Data Requirement**: Your phenotype CSV **must** contain columns matching `[target_column]`, `Age`, and `Sex`. Missing columns will raise a `ValueError` during validation.
-
-### Output Files
-When `save_plots=True` and `save_json=True`, the following are generated in `results/`:
--   `{target}_results.png`: ROC Curve, Precision-Recall, Confusion Matrix, Calibration Curve
--   `{target}_results.json`: Metrics summary + top 10 important ROIs with anatomical names
--   `importance_{target}.csv`: Ranked list of all 414 brain regions
-
-<br>
-
-## Advanced: Component-Level API
-
-For custom workflows, all components are individually accessible:
-
-```python
-import bbtransformer as bbt
-
-# 1. Load data with stratified splits & age normalization
-train_loader, val_loader, test_loader, metadata = bbt.prepare_fmri_data(
-    data_path='dataset/fmri_ADHD.npz',
-    pheno_path='dataset/pheno_ADHD.csv',
-    target_column='ADHD'
-)
-
-# 2. Create model with custom architecture
-model = bbt.create_bbtransformer({
-    'feature_dim': 414,
-    'embed_dim': 256,      # Override default 512
-    'num_heads': 8,        # Override default 16
-    'num_layers': 4        # Override default 7
-})
-
-# 3. Train with Ranger21 + early stopping
-trained_model = bbt.train_model(
-    model, train_loader, val_loader,
+    # --- TRAINING HYPERPARAMETERS ---
+    training_config={
+        "epochs": 500,
+        "lr": 1e-5,
+        "weight_decay": 1.14e-06,
+        "patience": 50,
+    },
     early_stop_metric="f1",
-    use_focal_loss=True   # For imbalanced datasets
+    use_focal_loss=False,
+
+    # --- MODEL ARCHITECTURE ---
+    model_config=None,
+
+    # --- IMPORTANCE ANALYSIS ---
+    compute_importance=True,
+    importance_metric="loss",
+    importance_n_repeats=2,
+
+    # --- REPRODUCIBILITY AND HARDWARE ---
+    random_seed=42,
+    device=None,
+    batch_size=64,  
+    # --- OUTPUT CONTROL ---
+    save_plots=True,
+    save_json=True,
 )
 
-# 4. Single-subject diagnosis with confidence
-predictor = bbt.Diagnostic(trained_model, metadata)
-result = predictor.predict_single(fmri, age=56.3, ext=1)
-print(result['interpretation'])
+logging.info(
+    "Pipeline complete | F1: %.4f | AUC: %.4f | Project: %s",
+    results["metrics"]["f1"],
+    results["metrics"]["roc_auc"],
+    results["project_name"],
+)
 ```
 
+<img width="1785" height="1535" alt="image" src="https://github.com/user-attachments/assets/bb162441-5f1f-43ee-b01b-db0df98a64dd" />
+<img width="1485" height="735" alt="image" src="https://github.com/user-attachments/assets/c38b0d9d-52e1-426c-bd89-724d3c22f273" />
+<img width="1484" height="884" alt="image" src="https://github.com/user-attachments/assets/798b4f34-bd00-49c3-9be9-d76a55afc7e0" />
+
+
+
 <br>
+
+
 
 ## Key Features
 
@@ -127,38 +150,49 @@ print(result['interpretation'])
 -   **Early stopping** on F1 or validation loss
 -   **Mixed precision** training via `torch.amp`
 
-### Interpretation
--   **Permutation importance** for brain region ranking
--   **Single-subject diagnosis** with confidence scoring (`Diagnostic` class)
--   **Attention visualization** (when `return_attn_weights=True`)
 
 <br>
 
-## Installation
 
-```bash
-pip install git+https://github.com/cimt-unia/BBTransformer.git
+### Details
+
+The simplest way to run a full analysis pipeline (training + evaluation + biomarker discovery) is via `run_analysis`:
+
+### Output Files
+When `save_plots=True` and `save_json=True`, the following are generated in `results/`:
+-   `{target}_results.png`: ROC Curve, Precision-Recall, Confusion Matrix, Calibration Curve
+-   `{target}_results.json`: Metrics summary + top 10 important ROIs with anatomical names
+-   `importance_{target}.csv`: Ranked list of all 414 brain regions
+
+
+
+<br>
+
+### 📁 Project Structure
+
+```
+BBT/
+├── bbtransformer/          # Core package (installable)
+│   ├── __init__.py         # Public API exports
+│   ├── model.py            # BBTransformer, create_bbtransformer
+│   ├── utils.py            # Weight I/O, ROI metadata loading
+│   └── trainer/            # exe, train, eval, rank, pred, tune, loader
+├── notebooks/              # Analysis & tutorials
+├── preprocessing/          # Dataset-specific curation
+└── weights/                # Pretrained & fine-tuned model weights
 ```
 
 
 
-<br>
 
 
-### Datasets
-
-| Dataset        | Conditions                              | Atlas              | Preprocessing      | Role               |
-| :------------- | :-------------------------------------- | :----------------- | :----------------- | :----------------- |
-| **ABIDE**      | ASD vs Controls                         | Glasser+Tian (414) | C-PAC              | Foundation Model   |
-| **UK Biobank** | ICD F32, G20, G40, etc. (10 conditions) | Glasser+Tian (414) | Official UKB Pipeline | Transfer Learning  |
-| **ADHD-200**   | ADHD vs Controls                        | Glasser+Tian (414) | Athena (AFNI/FSL)  | External Validation |
-| **UCLA LA5c**  | Schizophrenia, Bipolar, ADHD vs Controls | Glasser+Tian (414) | fMRIPrep v0.4.4    | External Validation |
-
-> ⚠️ **Note**: All datasets are standardized to **150 timepoints @ 2.0s TR** across 414 ROIs via cubic spline interpolation and per-subject z-scoring before model input
 
 <br>
 
-## ⚙️ Default Configuration
+
+
+
+### ⚙️ Default Configuration
 
 Best hyperparameters from clinically validated Optuna tuning [2]:
 
@@ -180,17 +214,30 @@ DEFAULT_HP = {
 
 <br>
 
-## 📁 Project Structure
 
-```
-BBT/
-├── bbtransformer/          # Core package (installable)
-│   ├── __init__.py         # Public API exports
-│   ├── model.py            # BBTransformer, create_bbtransformer
-│   ├── utils.py            # Weight I/O, ROI metadata loading
-│   └── trainer/            # exe, train, eval, rank, pred, tune, loader
-├── notebooks/              # Analysis & tutorials
-├── preprocessing/          # Dataset-specific curation
-└── weights/                # Pretrained & fine-tuned model weights
-```
+
+
+<br>
+
+## Model Architecture
+
+BBTransformer processes **150 × 414** fMRI time series through three integrated streams [2]:
+
+1.  **Primary Temporal Stream**:
+    -   7 transformer layers
+    -   512-dim embeddings, 16 query heads, 4 KV heads (GQA)
+    -   Rotary position embeddings (RoPE), RMSNorm, SwiGLU
+2.  **Local Patch Stream**:
+    -   Patch size 3 with cross-attention fusion
+    -   Captures short-scale temporal dynamics
+3.  **Temporal Attention Pooling**:
+    -   Learned weighting of timepoints for diagnostic decisions
+    -   Integrates confounder embeddings (Age, Sex)
+
+Final output: Single probability via sigmoid for binary classification.
+
+
+<br>
+
+
 
