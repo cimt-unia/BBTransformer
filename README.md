@@ -1,9 +1,16 @@
-# BBT: Multivariate Time Series Transformer Model for fMRI Biomarker Discovery
+# **BBT: A Multivariate Time Series Transformer for Modeling Stochastic Dynamical Systems in the Human Brain**
 
 
-A minimal, modular, and interpretable foundation model for fMRI-based brain disorder classification using a multivariate time series model with rotary embeddings and grouped-query attention.
 
-Trained on 414-region Glasser+Tian parcellated time series, BBTransformer enables transfer learning, fine-tuning, and biomarker discovery across ADHD, ASD, UK Biobank ICD conditions, and more.
+Chair of Informatics for Medical Technologies (CIMT), University of Augsburg - Author: *J.Zorraquin*
+
+## **Abstract**
+
+Standard resting-state functional MRI (rs-fMRI) analysis collapses the BOLD signal into static functional connectivity matrices, discarding the transient neural dynamics that may underlie individual pathology. We introduce BBT, a novel multivariate time-series architecture that operates directly on the continuous spatiotemporal trajectory of raw, whole-brain BOLD activity, treating the brain as a stochastic dynamical system rather than a static network. In this specific fMRI implementation, we preserve native spatiotemporal structure across 414 cortical and subcortical regions, while conditioning on age and biological sex as embedded covariates to disentangle diagnostic signals from demographic confounding. The architecture is built on three core innovations: dual-resolution temporal encoding (fine-grained and coarse patch streams), learned attention pooling that autonomously identifies diagnostically salient time windows, and confounder-aware decision fusion.
+
+To overcome data scarcity and leverage shared neurobiological principles, we implement a biologically ordered transfer learning protocol: starting from an autism spectrum disorder (ASD) foundation model (ABIDE, N \= 585), we sequentially fine-tune our transformer model across 10 neurological and psychiatric conditions in the UK Biobank (N \= 2182), following a pathophysiological hierarchy from neurodevelopmental to white matter disorders. This strategy enables robust generalization, achieving F1 \= 0.68–0.92 and ROC-AUC \= 0.67–0.95. Critically, performance extends to two external, independently preprocessed cohorts: ADHD-200 (F1 \= 0.722, ROC-AUC \= 0.818) and the UCLA LA5c study (F1 \= 0.632, ROC-AUC \= 0.640). In stark contrast, the model fails on high-prevalence but biologically heterogeneous conditions, depressive episode (N \= 4,338), sleep disorders (N \= 1,104), and substance use disorders (N \= 2,276), despite their large sample sizes. This dissociation demonstrates that diagnostic learnability from rs-fMRI is gated by biological coherence, not data volume. Permutation-based feature importance reveals anatomically coherent, disorder-specific biomarker circuits aligned with known disease neurobiology. These results establish a new paradigm: disorder-specific signatures reside in spatiotemporal dynamics, not static connectivity.
+
+**Keywords:** *stochastic dynamical systems, resting-state fMRI, multivariate time-series transformer, biomarker discovery, spatiotemporal dynamics, foundation model, neuroimaging*
 
 <br>
 
