@@ -4,6 +4,8 @@
 
 Chair of Informatics for Medical Technologies (CIMT), University of Augsburg - Author: *J.Zorraquin*
 
+<br>
+
 ## **Abstract**
 
 Standard resting-state functional MRI (rs-fMRI) analysis collapses the BOLD signal into static functional connectivity matrices, discarding the transient neural dynamics that may underlie individual pathology. We introduce BBT, a novel multivariate time-series architecture that operates directly on the continuous spatiotemporal trajectory of raw, whole-brain BOLD activity, treating the brain as a stochastic dynamical system rather than a static network. In this specific fMRI implementation, we preserve native spatiotemporal structure across 414 cortical and subcortical regions, while conditioning on age and biological sex as embedded covariates to disentangle diagnostic signals from demographic confounding. The architecture is built on three core innovations: dual-resolution temporal encoding (fine-grained and coarse patch streams), learned attention pooling that autonomously identifies diagnostically salient time windows, and confounder-aware decision fusion.
